@@ -54,6 +54,9 @@ class DDW:public Cupola
 		int parseInfo (bool V = true);
 		int executeCmd (const char *cmd);
 		long inProgress (bool opeing);
+		bool cmdInProgress;
+
+		rts2core::ValueInteger *z;
 };
 
 }
@@ -62,10 +65,13 @@ DDW::DDW (int argc, char **argv):Cupola (argc, argv)
 {
 	sconn = NULL;
 	devFile = "/dev/ttyUSB0";
+	cmdInProgress = false;
 
 	addOption ('f', NULL, 1, "path to device, usually /dev/ttyUSB0");
 
 	setIdleInfoInterval(5);
+
+	createValue (z, "Z", "Z progress value", false);
 }
 
 DDW::~DDW ()
@@ -88,17 +94,18 @@ int DDW::processOption (int opt)
 
 int DDW::initHardware ()
 {
-    	sconn = new rts2core::ConnSerial(devFile, this, rts2core::BS9600, rts2core::C8, rts2core::NONE, 50);
+    	sconn = new rts2core::ConnSerial(devFile, this, rts2core::BS9600, rts2core::C8, rts2core::NONE, 25);
     	sconn->setDebug(getDebug ());
     	sconn->init();
-
-	sconn->writePort ("GHOM", 4);
 
 	return 0;
 }
 
 int DDW::info ()
 {
+	if (cmdInProgress)
+		return 0;
+
 	sconn->writePort ("GINF", 4);
 	parseInfo ();
 	return Cupola::info();
@@ -106,7 +113,7 @@ int DDW::info ()
 
 int DDW::startOpen ()
 {
-	return executeCmd ("GOPN") == 'O';
+	return executeCmd ("GOPN") == 'O' ? 0 : -1;
 }
 
 long DDW::isOpened ()
@@ -121,7 +128,9 @@ int DDW::endOpen ()
 
 int DDW::startClose ()
 {
-	return executeCmd ("GCLS") == 'C';
+	if (cmdInProgress)
+		return 0;
+	return executeCmd ("GCLS") == 'C' ? 0 : -1;
 }
 
 long DDW::isClosed ()
@@ -146,11 +155,6 @@ int DDW::parseInfo (bool V)
 	memset (buf, 0, sizeof(buf));
 
 	if (sconn->readPort (buf, 200, '\r'))
-		return -1;
-	// one more cr
-	char cr = 0;
-	sconn->readPort (&cr, 1);
-	if (cr != '\r')
 		return -1;
 
 	int ver;
@@ -184,25 +188,32 @@ int DDW::parseInfo (bool V)
 		bp++;
 	}
 
-	if (sscanf(bp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\r",
+	int sret = sscanf(bp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\r",
 		&ver, &dticks, &home1, &coast, &adaz,
 		&slave, &shutter, &dsr_status, &home, &htick_ccl,
 		&htick_clk, &upins, &weaage, &winddir, &windspd,
 		&temp, &humid, &wetness, &snow, &wind_peak,
-		&scopeaz, &intdz, &intoff) != 23
-	)
+		&scopeaz, &intdz, &intoff);
+
+	if (sret != 23)
+	{
+		logStream(MESSAGE_WARNING) << "cannot parse info string " << sret << sendLog;
 		return -1;
+	}
+
+	usleep (USEC_SEC * 1.5);
 
 	return 0;
 }
 
 int DDW::executeCmd (const char *cmd)
 {
-	if (!sconn->writePort (cmd, 4))
+	if (sconn->writePort (cmd, 4) != 0)
 		return -1;
 	char repl;
-	if (!sconn->readPort (repl))
+	if (sconn->readPort (repl) != 1)
 		return -1;
+	cmdInProgress = true;
 	return repl;
 }
 
@@ -218,15 +229,27 @@ long DDW::inProgress (bool opening)
 		case 'P':
 		{
 			char pos[5];
-			if (!sconn->readPort (pos, 4))
+			if (sconn->readPort (pos, 4, '\r') == -1)
 				return -1;
 			return 100;
-		}	
+		}
+		case 'Z':
+		{
+			char zbuf[4];
+			if (sconn->readPort (zbuf, 4, '\r') == -1)
+				return -1;
+			z->setValueInteger(atoi(zbuf));
+			sendValueAll(z);
+			return 100;
+		}
 		case 'V':
 		{
-			return parseInfo (false);
+			cmdInProgress = false;
+			parseInfo (false);
+			return -2;
 		}
 	}
+	logStream(MESSAGE_WARNING) << "unknow character during command execution: " << (char) rc << sendLog;
 	return -1;
 }
 
