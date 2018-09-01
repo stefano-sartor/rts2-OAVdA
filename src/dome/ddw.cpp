@@ -51,7 +51,9 @@ class DDW:public Cupola
 		rts2core::ConnSerial *sconn;
 		const char *devFile;
 
-		int parseInfo ();
+		int parseInfo (bool V = true);
+		int executeCmd (const char *cmd);
+		long inProgress (bool opeing);
 };
 
 }
@@ -90,6 +92,8 @@ int DDW::initHardware ()
     	sconn->setDebug(getDebug ());
     	sconn->init();
 
+	sconn->writePort ("GHOM", 4);
+
 	return 0;
 }
 
@@ -102,12 +106,12 @@ int DDW::info ()
 
 int DDW::startOpen ()
 {
-        return 0;
+	return executeCmd ("GOPN") == 'O';
 }
 
 long DDW::isOpened ()
 {
-	return 0;
+	return inProgress (true);
 }
 
 int DDW::endOpen ()
@@ -117,12 +121,12 @@ int DDW::endOpen ()
 
 int DDW::startClose ()
 {
-    	return 0;
+	return executeCmd ("GCLS") == 'C';
 }
 
 long DDW::isClosed ()
 {
-	return 2000;
+	return inProgress (false);
 }
 
 int DDW::endClose ()
@@ -135,15 +139,95 @@ double DDW::getSlitWidth (double alt)
 	return 5;
 }
 
-int DDW::parseInfo ()
+int DDW::parseInfo (bool V)
 {
 	char buf[200];
+	char *bp = buf;
+	memset (buf, 0, sizeof(buf));
+
 	if (sconn->readPort (buf, 200, '\r'))
 		return -1;
+	// one more cr
+	char cr = 0;
+	sconn->readPort (&cr, 1);
+	if (cr != '\r')
+		return -1;
 
-	logStream (MESSAGE_DEBUG) << buf << sendLog;
+	int ver;
+	int dticks;
+	int home1;
+	int coast;
+	int adaz;
+	int slave;
+	int shutter;
+	int dsr_status;
+	int home;
+	int htick_ccl;
+	int htick_clk;
+	int upins;
+	int weaage;
+	int winddir;
+	int windspd;
+	int temp;
+	int humid;
+	int wetness;
+	int snow;
+	int wind_peak;
+	int scopeaz;
+	int intdz;
+	int intoff;
+
+	if (V)
+	{
+		if (buf[0] != 'V')
+			return -1;
+		bp++;
+	}
+
+	if (sscanf(bp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\r",
+		&ver, &dticks, &home1, &coast, &adaz,
+		&slave, &shutter, &dsr_status, &home, &htick_ccl,
+		&htick_clk, &upins, &weaage, &winddir, &windspd,
+		&temp, &humid, &wetness, &snow, &wind_peak,
+		&scopeaz, &intdz, &intoff) != 23
+	)
+		return -1;
 
 	return 0;
+}
+
+int DDW::executeCmd (const char *cmd)
+{
+	if (!sconn->writePort (cmd, 4))
+		return -1;
+	char repl;
+	if (!sconn->readPort (repl))
+		return -1;
+	return repl;
+}
+
+long DDW::inProgress (bool opening)
+{
+	char rc;
+	if (!sconn->readPort(rc))
+		return -1;
+	switch (rc)
+	{
+		case 'S':
+			return 100;
+		case 'P':
+		{
+			char pos[5];
+			if (!sconn->readPort (pos, 4))
+				return -1;
+			return 100;
+		}	
+		case 'V':
+		{
+			return parseInfo (false);
+		}
+	}
+	return -1;
 }
 
 int main(int argc, char **argv)
