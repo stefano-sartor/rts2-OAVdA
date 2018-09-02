@@ -276,7 +276,7 @@ int ConnSerial::readPort (char &ch)
 	}
 	if (debugComm)
 	{
-		logStream (MESSAGE_DEBUG) << "readed from port 0x" << std::hex << std::setfill ('0') << std::setw(2) << ((int) ch) << sendLog;
+		logStream (MESSAGE_DEBUG) << "read from port 0x" << std::hex << std::setfill ('0') << std::setw(2) << ((int) ch) << " (" << (char) ch << ")" << sendLog;
 	}
 	return 1;
 }
@@ -325,7 +325,7 @@ int ConnSerial::readPort (char *rbuf, int b_len)
 		memcpy (tmp_b, rbuf, rlen);
 		tmp_b[rlen] = '\0';
 		LogStream ls = logStream (MESSAGE_DEBUG);
-		ls << "readed from port '";
+		ls << "read from port '";
 		logBuffer (ls, rbuf, rlen);
 		ls << "'" << sendLog;
 		delete []tmp_b;
@@ -350,7 +350,7 @@ size_t ConnSerial::readPortNoBlock (char *rbuf, size_t b_len)
 	if (debugComm)
 	{
 		LogStream ls = logStream (MESSAGE_DEBUG);
-		ls << "readed from port '";
+		ls << "read from port '";
 		logBuffer (ls, rbuf, ret);
 		ls << "'" << sendLog;
 	}
@@ -395,7 +395,7 @@ int ConnSerial::readPort (char *rbuf, int b_len, char endChar)
 			if (debugComm)
 			{
 				LogStream ls = logStream (MESSAGE_DEBUG);
-				ls << "readed from port '";
+				ls << "read from port '";
 				logBuffer (ls, rbuf, rlen);
 				ls << "'" << sendLog;
 			}
@@ -409,7 +409,7 @@ int ConnSerial::readPort (char *rbuf, int b_len, char endChar)
 		ls << endChar;
 	else
 		ls << "0x" << std::setfill ('0') << std::hex << std::setw (2) << ((int) endChar);
-	ls << "', readed '";
+	ls << "', read '";
 	logBuffer (ls, rbuf, rlen);
 	ls << "'" << sendLog;
 	flushError ();
@@ -424,7 +424,7 @@ int ConnSerial::readPort (char *rbuf, int b_len, const char *endChar)
 		if ((b_len - tl) < (int) strlen (endChar))
 		{
 			rbuf[tl] = '\0';
-			logStream (MESSAGE_ERROR) << "too few space in read buffer, so far readed " << rbuf << sendLog;
+			logStream (MESSAGE_ERROR) << "too few space in read buffer, so far read " << rbuf << sendLog;
 			flushError ();
 			return -1;
 		}
@@ -438,7 +438,7 @@ int ConnSerial::readPort (char *rbuf, int b_len, const char *endChar)
 		char *rl = rbuf + tl;
 		while (true)
 		{
-			// readed till end..
+			// read till end..
 		 	if (*ch == '\0')
 			{
 				rbuf[tl - strlen (endChar)] = '\0';
@@ -447,7 +447,7 @@ int ConnSerial::readPort (char *rbuf, int b_len, const char *endChar)
 			if (readPort (rl, 1) != 1)
 			{
 				*rl = '\0';
-				logStream (MESSAGE_ERROR) << "cannot read single character while looking for end " << endChar << ", readed " << rbuf << sendLog;
+				logStream (MESSAGE_ERROR) << "cannot read single character while looking for end " << endChar << ", read " << rbuf << sendLog;
 			}
 			tl++;
 			if (*rl != *ch)
