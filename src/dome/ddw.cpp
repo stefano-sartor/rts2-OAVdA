@@ -73,6 +73,7 @@ class DDW:public Cupola
 		int executeCmd (const char *cmd, cmdType newCmd);
 		long inProgress (bool opening);
 		cmdType cmdInProgress;
+		double azTelescopeOffset;
 
 		rts2core::ValueInteger *z;
 		rts2core::ValueInteger *shutter;
@@ -82,6 +83,7 @@ class DDW:public Cupola
 
 		long AzDomeOffsetCoeff[2][3];
 		
+		void setAzimuthTicks(int adaz) { setCurrentAz(359*(double)(adaz)/(double)(dticks->getValueInteger()), true); }
 };
 
 }
@@ -111,6 +113,7 @@ DDW::DDW (int argc, char **argv):Cupola (argc, argv)
 	AzDomeOffsetCoeff[2][2] = -4.908;
 	AzDomeOffsetCoeff[2][3] = 20.234;
 	
+	createValue(dticks, "dticks", "number of azimuth ticks", false);
 }
 
 DDW::~DDW ()
