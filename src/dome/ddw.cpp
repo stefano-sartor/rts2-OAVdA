@@ -19,6 +19,7 @@
 
 #include "cupola.h"
 #include "connection/serial.h"
+#include "math.h"
 
 using namespace rts2dome;
 
@@ -57,6 +58,13 @@ class DDW:public Cupola
 
 		virtual double getSlitWidth (double alt);
 
+		long getAzDomeOffset(double az);
+		long getDomeAzFromTargetAz(double targetAz);
+		long getTargetAzFromDomeAz(double domeAz);
+
+		/// remove this once the mount is implemented
+		long getTargetAlt() { return 60; }
+		
 	private:
 		rts2core::ConnSerial *sconn;
 		const char *devFile;
@@ -65,13 +73,15 @@ class DDW:public Cupola
 		int executeCmd (const char *cmd, cmdType newCmd);
 		long inProgress (bool opening);
 		cmdType cmdInProgress;
-		double azTelescopeOffset;
 
 		rts2core::ValueInteger *z;
 		rts2core::ValueInteger *shutter;
 		rts2core::ValueInteger *dticks;
 
-		void setAzimuthTicks(int adaz) { setCurrentAz(359*(double)(adaz)/(double)(dticks->getValueInteger()), true); }
+		void setAzimuthTicks(int adaz) { setCurrentAz(getTargetAzFromDomeAz(359*(double)(adaz)/(double)(dticks->getValueInteger())), true); }
+
+		long AzDomeOffsetCoeff[2][3];
+		
 };
 
 }
@@ -90,9 +100,17 @@ DDW::DDW (int argc, char **argv):Cupola (argc, argv)
 	createValue(shutter, "shutter", "DDW reported shutter state", false);
 	shutter->setValueInteger(0);
 
-	azTelescopeOffset = -17; 
-	
 	createValue(dticks, "dticks", "number of azimuth ticks", false);
+
+	// Azimuth Dome offset coefficients derived for Lowell TiMo
+	// using offset(az) = [1]*sin(az+[2])+[3]
+	AzDomeOffsetCoeff[1][1] = 4.2772;
+	AzDomeOffsetCoeff[1][2] = -21.510;
+	AzDomeOffsetCoeff[1][3] = 11.053;	
+	AzDomeOffsetCoeff[2][1] = 8.247;
+	AzDomeOffsetCoeff[2][2] = -4.908;
+	AzDomeOffsetCoeff[2][3] = 20.234;
+	
 }
 
 DDW::~DDW ()
@@ -155,7 +173,7 @@ int DDW::commandAuthorized (rts2core::Connection * conn)
 	}
 	else if (conn->isCommand ("home"))
 	{
-		if (cmdInProgress != IDLE || cmdInProgress != OPENING || cmdInProgress != MOVING)
+		if (cmdInProgress != IDLE && cmdInProgress != OPENING && cmdInProgress != MOVING)
 			return -1;
 		int rete = executeCmd("GHOM", HOMING);
 		if (rete < 0)
@@ -218,7 +236,8 @@ int DDW::endOpen ()
 
 int DDW::startClose ()
 {
-	if (cmdInProgress == CLOSING || (cmdInProgress != OPENING && shutter->getValueInteger() == 1))
+	if (cmdInProgress == CLOSING ||
+		(cmdInProgress != OPENING && shutter->getValueInteger() == 1))
 		return 0;
 	// stop any command in progress
 	if (cmdInProgress != IDLE)
@@ -280,7 +299,15 @@ int DDW::moveStart ()
 	
 	char azbuf[5];
 	sconn->flushPortIO();
-	snprintf(azbuf, 5, "G%03d", (int) round(getTargetAz()+azTelescopeOffset));
+
+	if (getDomeAzFromTargetAz(getTargetAz()) < 0)
+		snprintf(azbuf, 5, "G%03d",
+				 (int) round(360+getDomeAzFromTargetAz(getTargetAz())));
+	else
+		snprintf(azbuf, 5, "G%03d",
+				 (int) round(getDomeAzFromTargetAz(getTargetAz())));
+  
+		
 	int azret = executeCmd(azbuf, MOVING);
 	if (azret == 'R' || azret == 'L')
 	{
@@ -447,6 +474,28 @@ long DDW::inProgress (bool opening)
 	logStream(MESSAGE_WARNING) << "unknow character during command execution: " << (char) rc << sendLog;
 	cmdInProgress = IDLE;
 	return -1;
+}
+
+long DDW::getAzDomeOffset(double az)
+{
+	if (getTargetAlt() < 35)
+		return AzDomeOffsetCoeff[1][1]*
+			sin((az+AzDomeOffsetCoeff[1][2])/180*M_PI)+
+			AzDomeOffsetCoeff[1][3];
+	else
+		return AzDomeOffsetCoeff[2][1]*
+			sin((az+AzDomeOffsetCoeff[2][2])/180*M_PI)+
+			AzDomeOffsetCoeff[2][3];
+}
+
+long DDW::getDomeAzFromTargetAz(double targetAz)
+{
+	return targetAz - getAzDomeOffset(targetAz);
+}
+
+long DDW::getTargetAzFromDomeAz(double domeAz)
+{
+	return domeAz + getAzDomeOffset(domeAz);
 }
 
 int main(int argc, char **argv)
