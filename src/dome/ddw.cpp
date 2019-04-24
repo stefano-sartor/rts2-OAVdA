@@ -79,11 +79,11 @@ class DDW:public Cupola
 		rts2core::ValueInteger *shutter;
 		rts2core::ValueInteger *dticks;
 
-		//void setAzimuthTicks(int adaz) { setCurrentAz(getTargetAzFromDomeAz(359*(double)(adaz)/(double)(dticks->getValueInteger())), true); }
+		void setAzimuthTicks(int adaz) { setCurrentAz(getTargetAzFromDomeAz(359*(double)(adaz)/(double)(dticks->getValueInteger())), true); }
 
 		long AzDomeOffsetCoeff[2][3];
 		
-		void setAzimuthTicks(int adaz) { setCurrentAz(359*(double)(adaz)/(double)(dticks->getValueInteger()), true); }
+		//void setAzimuthTicks(int adaz) { setCurrentAz(359*(double)(adaz)/(double)(dticks->getValueInteger()), true); }
 };
 
 }
@@ -91,10 +91,10 @@ class DDW:public Cupola
 DDW::DDW (int argc, char **argv):Cupola (argc, argv)
 {
 	sconn = NULL;
-	devFile = "/dev/ttyUSB0";
+	devFile = "/dev/DDW";
 	cmdInProgress = IDLE;
 
-	addOption('f', NULL, 1, "path to device, usually /dev/ttyUSB0");
+	addOption('f', NULL, 1, "path to device, usually /dev/DDW");
 
 	setIdleInfoInterval(5);
 
@@ -112,8 +112,6 @@ DDW::DDW (int argc, char **argv):Cupola (argc, argv)
 	AzDomeOffsetCoeff[2][1] = 8.247;
 	AzDomeOffsetCoeff[2][2] = -4.908;
 	AzDomeOffsetCoeff[2][3] = 20.234;
-	
-	createValue(dticks, "dticks", "number of azimuth ticks", false);
 }
 
 DDW::~DDW ()
@@ -387,6 +385,8 @@ int DDW::parseInfo (bool V)
 		bp++;
 	}
 
+	//logStream(MESSAGE_WARNING) << "receive string from dome" << bp << sendLog;
+
 	int sret = sscanf(bp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\r",
 		&ver, &_dticks, &home1, &coast, &adaz,
 		&slave, &_shutter, &dsr_status, &home, &htick_ccl,
@@ -410,6 +410,9 @@ int DDW::parseInfo (bool V)
 			break;
 	}
 
+	
+	logStream(MESSAGE_WARNING) << "shutter state " << _shutter << sendLog;
+	
 	shutter->setValueInteger(_shutter);
 
 	dticks->setValueInteger(_dticks);
@@ -437,19 +440,30 @@ long DDW::inProgress (bool opening)
 	char rc;
 	if (!sconn->readPort(rc))
 		return -1;
+
 	switch (rc)
 	{
 		case 'S':
+		{
+			break;
+		}
 		case 'T':
+		{
 			return 100;
+			break;
+		}
 		case 'O':
+		{
 			if (cmdInProgress == OPENING)
 				return 100;
 			break;
+		}
 		case 'C':
+		{
 			if (cmdInProgress == CLOSING)
 				return 100;
 			break;
+		}
 		case 'P':
 		{
 			char pos[5];
@@ -457,6 +471,7 @@ long DDW::inProgress (bool opening)
 				return -1;
 			setAzimuthTicks(atoi(pos));
 			return 100;
+			break;
 		}
 		case 'Z':
 		{
@@ -466,12 +481,14 @@ long DDW::inProgress (bool opening)
 			z->setValueInteger(atoi(zbuf));
 			sendValueAll(z);
 			return 100;
+			break;
 		}
 		case 'V':
 		{
 			cmdInProgress = IDLE;
 			parseInfo (false);
 			return -2;
+			break;
 		}
 	}
 	logStream(MESSAGE_WARNING) << "unknow character during command execution: " << (char) rc << sendLog;
