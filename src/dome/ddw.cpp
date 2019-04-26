@@ -134,9 +134,10 @@ int DDW::processOption (int opt)
 
 int DDW::initHardware ()
 {
-    	sconn = new rts2core::ConnSerial(devFile, this, rts2core::BS9600, rts2core::C8, rts2core::NONE, 25);
-    	sconn->setDebug(getDebug ());
-    	sconn->init();
+	sconn = new rts2core::ConnSerial(devFile, this, rts2core::BS9600,
+									 rts2core::C8, rts2core::NONE, 25);
+	sconn->setDebug(getDebug ());
+	sconn->init();
 
 	sconn->flushPortIO();
 
@@ -147,6 +148,8 @@ int DDW::initHardware ()
 
 int DDW::info ()
 {
+	//logStream(MESSAGE_WARNING) << "in info with cmdInProgress " << cmdInProgress << sendLog;
+	
 	if (cmdInProgress != IDLE)
 		return 0;
 
@@ -199,16 +202,21 @@ int DDW::startOpen ()
 		sconn->flushPortIO();
 		char buf[200];
 		sconn->readPort(buf, 200);
+
+    	logStream(MESSAGE_WARNING) << "trying to open but " << buf << sendLog;
 	}
 	int rete = executeCmd ("GOPN", OPENING);
 	// when homing is needed, R or L is returned
 	switch (rete)
 	{
 		case 'O':
+			return 100;
 		case 'R':
+			return 100;
 		case 'L':
-			shutter->setValueInteger(0);
-			return 0;
+			return 100;
+			//shutter->setValueInteger(0);
+			//return 0;
 		default:
 			cmdInProgress = IDLE;
 			return DEVDEM_E_HW;
@@ -237,12 +245,18 @@ int DDW::endOpen ()
 
 int DDW::startClose ()
 {
-	if (cmdInProgress == CLOSING ||
+	if (cmdInProgress == CLOSING |
 		(cmdInProgress != OPENING && shutter->getValueInteger() == 1))
+		{
+		//logStream(MESSAGE_WARNING) << "shutter already closing or closed; sutther state" << shutter << sendLog;
 		return 0;
+		}
+		
 	// stop any command in progress
 	if (cmdInProgress != IDLE)
 	{
+
+		//logStream(MESSAGE_WARNING) << "aborting command in progress " << cmdInProgress << sendLog;
 		sconn->writePort("GINF", 4);
 		parseInfo ();
 		sconn->flushPortIO();
@@ -252,16 +266,25 @@ int DDW::startClose ()
 
 	int rete = executeCmd ("GCLS", CLOSING);
 	// when homing is needed, R or L is returned
+	//logStream(MESSAGE_WARNING) << "integer value received upon calling close command " << rete << sendLog;
+		
 	switch (rete)
 	{
 		case 'C':
+   		   return 100;
 		case 'R':
+		   return 100;
 		case 'L':
-			shutter->setValueInteger(0);
-			return 0;
+		   return 100;
+		case 'Z':
+		   return 100;
+		case 'S':
+		   return 100;
+		//shutter->setValueInteger(0);
+		//return 0;
 		default:
 			cmdInProgress = IDLE;
-			return DEVDEM_E_HW;
+		    return DEVDEM_E_HW;
 	}
 }
 
@@ -273,6 +296,8 @@ long DDW::isClosed ()
 			return -1;
 		return shutter->getValueInteger () == 1 ? -2 : 0;
 	}
+
+
 	return inProgress (false);
 }
 
@@ -320,7 +345,7 @@ int DDW::moveStart ()
 		cmdInProgress = IDLE;
 		return 0;
 	}
-	logStream(MESSAGE_WARNING) << "unknow azimuth character " << (char) azret << sendLog;
+	logStream(MESSAGE_WARNING) << "unknown azimuth character " << (char) azret << sendLog;
 	cmdInProgress = IDLE;
 	return DEVDEM_E_HW;
 }
@@ -385,7 +410,7 @@ int DDW::parseInfo (bool V)
 		bp++;
 	}
 
-	//logStream(MESSAGE_WARNING) << "receive string from dome" << bp << sendLog;
+	//logStream(MESSAGE_WARNING) << "receive string from dome " << bp << sendLog;
 
 	int sret = sscanf(bp, "%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d\r",
 		&ver, &_dticks, &home1, &coast, &adaz,
@@ -411,7 +436,7 @@ int DDW::parseInfo (bool V)
 	}
 
 	
-	logStream(MESSAGE_WARNING) << "shutter state " << _shutter << sendLog;
+	//logStream(MESSAGE_WARNING) << "shutter state " << _shutter << sendLog;
 	
 	shutter->setValueInteger(_shutter);
 
@@ -432,6 +457,10 @@ int DDW::executeCmd (const char *cmd, cmdType newCmd)
 	if (sconn->readPort (repl) != 1)
 		return -1;
 	cmdInProgress = newCmd;
+
+	//logStream(MESSAGE_WARNING) << "executing command " << cmdInProgress << " with reply " << repl << sendLog;
+	
+
 	return repl;
 }
 
@@ -444,34 +473,24 @@ long DDW::inProgress (bool opening)
 	switch (rc)
 	{
 		case 'S':
-		{
-			break;
-		}
+		    return 100;
 		case 'T':
-		{
 			return 100;
-			break;
-		}
 		case 'O':
-		{
 			if (cmdInProgress == OPENING)
 				return 100;
 			break;
-		}
 		case 'C':
-		{
 			if (cmdInProgress == CLOSING)
 				return 100;
 			break;
-		}
 		case 'P':
 		{
-			char pos[5];
+		    char pos[5];
 			if (sconn->readPort(pos, 4, '\r') == -1)
 				return -1;
 			setAzimuthTicks(atoi(pos));
 			return 100;
-			break;
 		}
 		case 'Z':
 		{
@@ -481,17 +500,16 @@ long DDW::inProgress (bool opening)
 			z->setValueInteger(atoi(zbuf));
 			sendValueAll(z);
 			return 100;
-			break;
 		}
 		case 'V':
 		{
 			cmdInProgress = IDLE;
 			parseInfo (false);
 			return -2;
-			break;
 		}
 	}
-	logStream(MESSAGE_WARNING) << "unknow character during command execution: " << (char) rc << sendLog;
+		
+	logStream(MESSAGE_WARNING) << "unknown character during command execution: " << (char) rc << sendLog;
 	cmdInProgress = IDLE;
 	return -1;
 }
