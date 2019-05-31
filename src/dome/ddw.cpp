@@ -210,11 +210,11 @@ int DDW::startOpen ()
 	switch (rete)
 	{
 		case 'O':
-			return 100;
+			return 0;
 		case 'R':
-			return 100;
+			return 0;
 		case 'L':
-			return 100;
+			return 0;
 			//shutter->setValueInteger(0);
 			//return 0;
 		default:
