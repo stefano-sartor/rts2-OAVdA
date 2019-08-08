@@ -61,9 +61,11 @@ class DDW:public Cupola
 		long getAzDomeOffset(double az);
 		long getDomeAzFromTargetAz(double targetAz);
 		long getTargetAzFromDomeAz(double domeAz);
+		float * getOffsetCoeff();
 
 		/// remove this once the mount is implemented
-		long getTargetAlt() { return 60; }
+		long getTargetAlt() { return 15; }
+
 		
 	private:
 		rts2core::ConnSerial *sconn;
@@ -80,10 +82,10 @@ class DDW:public Cupola
 		rts2core::ValueInteger *dticks;
 
 		void setAzimuthTicks(int adaz) { setCurrentAz(getTargetAzFromDomeAz(359*(double)(adaz)/(double)(dticks->getValueInteger())), true); }
-
-		long AzDomeOffsetCoeff[2][3];
+	
 		
-		//void setAzimuthTicks(int adaz) { setCurrentAz(359*(double)(adaz)/(double)(dticks->getValueInteger()), true); }
+/*		void setAzimuthTicks(int adaz) { setCurrentAz(359*(double)(adaz)/(double)(dticks->getValueInteger()), true); } */
+
 };
 
 }
@@ -104,14 +106,7 @@ DDW::DDW (int argc, char **argv):Cupola (argc, argv)
 
 	createValue(dticks, "dticks", "number of azimuth ticks", false);
 
-	// Azimuth Dome offset coefficients derived for Lowell TiMo
-	// using offset(az) = [1]*sin(az+[2])+[3]
-	AzDomeOffsetCoeff[1][1] = 4.2772;
-	AzDomeOffsetCoeff[1][2] = -21.510;
-	AzDomeOffsetCoeff[1][3] = 11.053;	
-	AzDomeOffsetCoeff[2][1] = 8.247;
-	AzDomeOffsetCoeff[2][2] = -4.908;
-	AzDomeOffsetCoeff[2][3] = 20.234;
+
 }
 
 DDW::~DDW ()
@@ -326,14 +321,20 @@ int DDW::moveStart ()
 	char azbuf[5];
 	sconn->flushPortIO();
 
-	if (getDomeAzFromTargetAz(getTargetAz()) < 0)
+	 if (getDomeAzFromTargetAz(getTargetAz()) < 0) {
 		snprintf(azbuf, 5, "G%03d",
-				 (int) round(360+getDomeAzFromTargetAz(getTargetAz())));
-	else
+				 (int) round(360+getDomeAzFromTargetAz(getTargetAz()))); 
+
+		//logStream(MESSAGE_WARNING) << "Azimut after transformation:" << (int) round(360+getDomeAzFromTargetAz(getTargetAz())) << sendLog;
+}
+	else {
 		snprintf(azbuf, 5, "G%03d",
 				 (int) round(getDomeAzFromTargetAz(getTargetAz())));
-  
-		
+		//logStream(MESSAGE_WARNING) << "Azimut after transformation:" << (int) round(getDomeAzFromTargetAz(getTargetAz())) << sendLog;
+}
+
+/*	snprintf(azbuf, 5, "G%03d", (int) round(getTargetAz())); */
+	
 	int azret = executeCmd(azbuf, MOVING);
 	if (azret == 'R' || azret == 'L')
 	{
@@ -514,28 +515,120 @@ long DDW::inProgress (bool opening)
 	return -1;
 }
 
+float * DDW::getOffsetCoeff()
+{
+	// Azimuth Dome offset coefficients derived for Lowell TiMo
+	// these coefficients assume (N:0, E:90, S:180, W:270)
+	// the transformation from rts2 horizontal system is done in
+	// getDomeAzFromTargetAz and getTargetAzfromDomeAz
+
+static float AzDomeOffsetCoeff[3];
+
+if (getTargetAlt() > 0 and getTargetAlt() <= 30) {
+	AzDomeOffsetCoeff[0] = -0.023*getTargetAlt()-4.291;
+	AzDomeOffsetCoeff[1] = -0.015*getTargetAlt()+0.24;
+	AzDomeOffsetCoeff[2] = -0.102*getTargetAlt()-11.345;
+}
+
+else if (getTargetAlt() > 30 and getTargetAlt() <= 45) {
+	AzDomeOffsetCoeff[0] = -0.044*getTargetAlt()-3.663;
+	AzDomeOffsetCoeff[1] = -0.015*getTargetAlt()-0.028;
+	AzDomeOffsetCoeff[2] = -0.171*getTargetAlt()-9.287;
+}
+
+else if (getTargetAlt() > 45 and getTargetAlt() <= 60) {
+	AzDomeOffsetCoeff[0] = -0.201*getTargetAlt()+3.402;
+	AzDomeOffsetCoeff[1] = 0.0078*getTargetAlt()-0.637;
+	AzDomeOffsetCoeff[2] = -0.337*getTargetAlt()-1.835;
+}
+
+else if (getTargetAlt() > 60 and getTargetAlt() <= 75) {
+	AzDomeOffsetCoeff[0] = -0.337*getTargetAlt()+11.55;
+	AzDomeOffsetCoeff[1] = 0.0042*getTargetAlt()-0.421;
+	AzDomeOffsetCoeff[2] = -0.909*getTargetAlt()+32.537;
+}
+
+else if (getTargetAlt() > 75 and getTargetAlt() <= 90) {
+	AzDomeOffsetCoeff[0] = -0.585*getTargetAlt()+30.150;
+	AzDomeOffsetCoeff[1] = -0.796*getTargetAlt()+59.614;
+	AzDomeOffsetCoeff[2] = -2.345*getTargetAlt()+140.172;
+}
+
+
+return AzDomeOffsetCoeff;
+	
+}
+
 long DDW::getAzDomeOffset(double az)
 {
-	if (getTargetAlt() < 35)
-		return AzDomeOffsetCoeff[1][1]*
-			sin((az+AzDomeOffsetCoeff[1][2])/180*M_PI)+
-			AzDomeOffsetCoeff[1][3];
-	else
-		return AzDomeOffsetCoeff[2][1]*
-			sin((az+AzDomeOffsetCoeff[2][2])/180*M_PI)+
-			AzDomeOffsetCoeff[2][3];
+ 	float *coeffarray = getOffsetCoeff();
+
+	return coeffarray[0]*sin(az/180*M_PI+coeffarray[1])+coeffarray[2];
+
+
 }
 
 long DDW::getDomeAzFromTargetAz(double targetAz)
 {
-	return targetAz - getAzDomeOffset(targetAz);
+	// add 180 degs to go from rts2 horizontal frame to (N:0, E:90,
+	// S:180, W:270) frame in which measurements were done
+	targetAz = ((int)targetAz + 180) % 360;
+	return targetAz + getAzDomeOffset(targetAz);
 }
 
 long DDW::getTargetAzFromDomeAz(double domeAz)
 {
-	return domeAz + getAzDomeOffset(domeAz);
+	// add 180 degs to go from rts2 horizontal frame to (N:0, E:90,
+	// S:180, W:270) frame in which measurements were done
+	domeAz = ((int)domeAz - 180 + 360) % 360;
+	return domeAz - getAzDomeOffset(domeAz);
 }
 
+/* TO BE IMPLEMENTED FOR OTHER TELESCOPE
+
+float * getOffsetCoeffOther(getTargetAlt()) 
+{
+
+static float AzDomeOffsetCoeff[3];
+
+if (getTargetAlt() > 0 and getTargetAlt() <= 30) {
+	AzDomeOffsetCoeff[0] = 0.032*getTargetAlt()-13.67;
+	AzDomeOffsetCoeff[1] = -0.0006*getTargetAlt()-0.089;
+	AzDomeOffsetCoeff[2] = 0.0806*getTargetAlt()+5.107;
+}
+
+else if (getTargetAlt() > 30 and getTargetAlt() <= 45) {
+	AzDomeOffsetCoeff[0] = -0.071*getTargetAlt()-10.565;
+	AzDomeOffsetCoeff[1] = -0.00547*getTargetAlt()+0.057;
+	AzDomeOffsetCoeff[2] = 0.317*getTargetAlt()-1.993;
+}
+
+else if (getTargetAlt() > 45 and getTargetAlt() <= 60) {
+	AzDomeOffsetCoeff[0] = -0.096*getTargetAlt()-9.443;
+	AzDomeOffsetCoeff[1] = 0.0022*getTargetAlt()-0.288;
+	AzDomeOffsetCoeff[2] = 0.630*getTargetAlt()-16.045;
+}
+
+else if (getTargetAlt() > 60 and getTargetAlt() <= 90) {
+	AzDomeOffsetCoeff[0] = -0.132*getTargetAlt()-7.281;
+	AzDomeOffsetCoeff[1] = 0.00026667*getTargetAlt()-0.14;
+	AzDomeOffsetCoeff[2] = 0.7107*getTargetAlt()-20.917;
+}
+
+
+return AzDomeOffsetCoeff;
+
+}
+
+long  CLASS::getAzDomeOffsetOtherTelescope(double az)
+{
+ 	float *coeffarray = getOffsetCoeffOtheró();
+
+	return coeffarray[0]*sin(az/180*M_PI+coeffarray[1])+coeffarray[2];
+
+}
+
+*/
 int main(int argc, char **argv)
 {
 	DDW device(argc, argv);
