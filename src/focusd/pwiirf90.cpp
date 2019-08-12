@@ -62,7 +62,6 @@ class PWIIRF90:public Focusd
 
 	private:
 		void getValue(const char *name, rts2core::Value *val);
-		void openRem ();
 		int findOptima ();
 		
 		int getPos ();
@@ -100,7 +99,8 @@ PWIIRF90::PWIIRF90 (int argc, char **argv):Focusd (argc, argv)
 	createValue (TempAmbient, "temp_ambient",
 				 "[C] Ambient temperature in telescope", true);
 
-	createValue (fanMode, "FANMODE", "Fan ON? : TRUE/FALSE", false, RTS2_VALUE_WRITABLE);
+	createValue (fanMode, "FANMODE", "Fan ON? : TRUE/FALSE", false,
+				 RTS2_VALUE_WRITABLE);
 		
 	setFocusExtent (-1000, 30000);
 	
@@ -146,26 +146,75 @@ int PWIIRF90::setValue (rts2core::Value *old_value, rts2core::Value *new_value)
 
 int PWIIRF90::setFan(int fancmd)
 {
-	/* Default fan string for off */
+	std::stringstream ss;
+	std::string _buf;
+	int i;
+	unsigned int chksum = 0;
+	unsigned char sendstr[] = { 0x3b, 0x04, 0x20, 0x13, 0x27, 0x00, 0x00 };
+	// have to update sendstr[5] (on/off) and sendstr[6] (checksum)
+	char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+	// have to update sendstr[5] (sensor) and sendstr[6] (checksum)
+	sendstr[5] = fancmd;
 	
-	char outputstr[] = { 0x50, 0x02, 0x13, 0x27, 0x00, 0x00, 0x00, 0x00 };
-	char returnstr[] = {0x00, 0x00, 0x00, 0x00 };
-	
-	
-	/* Request the fans on through the EFA on */
-	
-	if ( fancmd > 0 )
-	{
-		outputstr[4] = 0x01;
-	} 
+	// derive and update checksum byte
+	// exclude start of message and chksum bytes
+	for (i=1; i<(sizeof(sendstr)/sizeof(char)-1); i++)
+		chksum += (unsigned int)sendstr[i];
+	chksum = -chksum & 0xff;
+	sendstr[6] = chksum;
 
-	logStream (MESSAGE_DEBUG) << " fan cmd is " << fancmd << sendLog;
+	// // debug only
+	// for (i=0; i<sizeof(sendstr)/sizeof(char); ++i)
+	// 	ss << std::hex << (int)sendstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "send command "  << _buf << sendLog;
 	
-	/* Send the command */
-	sconn->writeRead(outputstr, 8, returnstr, 4);
-	if (returnstr[0] != '#') 
-	    logStream (MESSAGE_ERROR) << " No acknowledgement from thermal control" << sendLog;
-	    
+	// send command
+	sconn->flushPortIO();
+	sconn->writePort((const char*)(&sendstr), sizeof(sendstr)/sizeof(char));
+
+	// read acknowledgement
+	if (sconn->readPort(returnstr, 7) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "could not read from serial connection"
+								  << sendLog;
+		return -1;
+	}
+
+		// switch RTS bit to receive results
+	sconn->switchRTS();
+
+	// read reply
+	if (sconn->readPort(returnstr, sizeof(returnstr)/sizeof(char)) == -1)
+	{
+		sconn->switchRTS();
+		return -1;
+	}
+
+	// check checksum
+	chksum = 0;
+	for (i=1; i<(sizeof(returnstr)/sizeof(char)-1); i++)
+		chksum += (unsigned int)returnstr[i];
+	chksum = -chksum & 0xff;
+
+	// // debug only
+	// ss.str(std::string());
+	// for (i=0; i<sizeof(returnstr)/sizeof(char); ++i)
+	// 	ss << std::hex << (int)returnstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "received result "  << _buf << sendLog;
+	
+	if ((int)(unsigned char)returnstr[6] != chksum)
+	{
+		sconn->switchRTS();
+		logStream (MESSAGE_ERROR) << "result checksum corrupt" << sendLog;
+		return -1;
+	}
+	
+	// switch RTS bit to enable requests again
+	sconn->switchRTS();
+
+	
 	return 0;
 }    
 
@@ -380,8 +429,6 @@ int PWIIRF90::SetHedrickFocuser(int focuscmd, int focusspd)
 //
 int PWIIRF90::setTo (double num)
 {
-	//logStream (MESSAGE_DEBUG) << " in setTo " << sendLog ;  
-
 	target->setValueDouble(num);
 
 	return 0;
@@ -455,39 +502,6 @@ int PWIIRF90::isFocusing ()
 	return 0;
 }
 
-/* 
-    this is based on the logic in atc2.cpp - i.e. we ensure that the focuser is connected and switched on 
-    - code suitably modified for hedrick focuser commands 
-    - basically ask for version number and ensure number of returned bytes and last char is \#...
-    
-    */
-void PWIIRF90::openRem ()
-{
-	unsigned char sendStr[] = { 0x3b, 0x03, 0x20, 0xfe, 0x00, 0x00, 0x00, 0x02 };
-
-	int ret = sconn->writeRead ((char *) sendStr, 8, buf, 3);
-	if (ret != 3)
-		throw rts2core::Error ("focuser open command didn't respond with 3 chars ");
-
-
-	std::stringstream ss;
-	int i = 0;
-	for (i=0; i<3; ++i)
-		ss << std::hex << (int)buf[i] << " ";
-	std::string _buf = ss.str();
-		
-	logStream (MESSAGE_DEBUG) << "_buf "  << buf << sendLog;
-	
-	
-
-
-	
-	// if (buf[2] != 0x23 )
-	//         throw rts2core::Error (std::string ("invalid reply from planewave focuser getVersion command :")+ buf);
-	// logStream (MESSAGE_DEBUG) << "focuser responded with " << buf <<  " EOL " << sendLog ;
-	
-}
-
 
 int PWIIRF90::getTemp ()
 {
@@ -504,9 +518,6 @@ int PWIIRF90::getTemp ()
 	temperature->setValueFloat(temp);
     // FOC_TEMP is Primary Mirror Temperature ... 
 
-	logStream (MESSAGE_DEBUG) << "primtemp " << temp <<  sendLog;
-
-	
 	// ambient temperature
 	if (GetTemperature(&temp, 1) < 0)
 	{
@@ -522,10 +533,9 @@ int PWIIRF90::getTemp ()
 int PWIIRF90::info ()
 {
 	getPos();
-	getTemp (); 
+	getTemp(); 
 
-	return Focusd::info ();
-	
+	return Focusd::info();
 }
 
 int PWIIRF90::getPos ()
@@ -608,10 +618,7 @@ int PWIIRF90::getPos ()
 	position->setValueInteger(focus);
 	sendValueAll(position);
 	return 0;
-	
 }
-
-
 
 int PWIIRF90::init ()
 {
