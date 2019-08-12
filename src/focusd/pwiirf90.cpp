@@ -22,8 +22,11 @@
 #include "focusd.h"
 #include "connection/serial.h"
 
+// planewave leftovers
 #define FOCUSSCALE       11.513442 
-#define FOCUSDIR            1  
+#define FOCUSDIR            1
+
+#define FOCUSER_TICKS_PER_MICRON  207.288
 
 //#define FOCUSERPORT "/dev/IRF" 
 
@@ -190,10 +193,9 @@ int PWIIRF90::GetTemperature(double *temp, int tempsensor=0)
 	// _buf = ss.str();
 	// logStream (MESSAGE_DEBUG) << "send command "  << _buf << sendLog;
 	
-	sconn->flushPortIO();
-
 	// send command
-	sconn->writePort((const char*)(&sendstr), 7);
+	sconn->flushPortIO();
+	sconn->writePort((const char*)(&sendstr), sizeof(sendstr)/sizeof(char));
 
 	// read acknowledgement
 	if (sconn->readPort(returnstr, 7) == -1)
@@ -489,7 +491,6 @@ void PWIIRF90::openRem ()
 
 int PWIIRF90::getTemp ()
 {
-
 	double temp; 
 
 	// primary mirror
@@ -515,18 +516,12 @@ int PWIIRF90::getTemp ()
 	}
 	TempAmbient->setValueFloat(temp);
 
-	logStream (MESSAGE_DEBUG) << "TempM1 " << TempM1->getValueFloat()
-							  <<  sendLog;
-	logStream (MESSAGE_DEBUG) << "TempAmbient " << TempAmbient->getValueFloat()
-							  <<  sendLog;
-	
 	return 0;
-
 }
 
 int PWIIRF90::info ()
 {
-	//getPos();
+	getPos();
 	getTemp (); 
 
 	return Focusd::info ();
@@ -535,48 +530,83 @@ int PWIIRF90::info ()
 
 int PWIIRF90::getPos ()
 {
-	logStream (MESSAGE_ERROR) << "in get pos" << sendLog;
-	
-	//char sendStr[] = { 0x50, 0x01, 0x12, 0x01, 0x00, 0x00, 0x00, 0x03 };
-	char sendStr[] = { 0x3B, 0x03, 0x20, 0x12, 0x01, 0xCA };
-    char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
- 	int b0,b1,b2;
-  	int count;
-  	double focus, focusscale;
-
-	sconn->flushPortIO();
-	
-  	/* Send the command */
-	int ret=sconn->writeRead ( sendStr, 6, returnstr, 10 );
-	if (ret != 4) 	
-		throw rts2core::Error ("focuser open command didn't respond with 4 chars ");
-
 	std::stringstream ss;
-	int i = 0;
-	for (i=0; i<6; ++i)
-		ss << std::hex << (int)returnstr[i] << " ";
-	std::string received = ss.str();
-
-	logStream (MESSAGE_ERROR) << " returnstr is " << received << sendLog;		
-
-	b0 = (unsigned char) returnstr[0];
-  	b1 = (unsigned char) returnstr[1];
-  	b2 = (unsigned char) returnstr[2];
-  	count = 256*256*b0 + 256*b1 + b2;
-	  
-	focus = count;
-
-	/* Apply a conversion so that the focus scale comes out in decimal microns. */
-	/* The constant FOCUSSCALE is defined in header file.                       */
-  
-  	focusscale = FOCUSSCALE; 
-  	focus = focus/focusscale;     
-
-	logStream (MESSAGE_ERROR) << " pos is " << focus << sendLog;	
-
+	std::string _buf;
+	int i;
+	unsigned int chksum = 0;
+	unsigned char sendstr[] = { 0x3b, 0x03, 0x20, 0x12, 0x1, 0xca };
+	char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00,
+						 0x00, 0x00, 0x00, 0x00 };
 	
-	position->setValueInteger (focus);
-	sendValueAll (position);
+	// debug only
+	// for (i=0; i<sizeof(sendstr)/sizeof(char); ++i)
+	// 	ss << std::hex << (int)sendstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "send command "  << _buf << sendLog;
+
+	// send command
+	sconn->flushPortIO();
+	sconn->writePort((const char*)(&sendstr), sizeof(sendstr)/sizeof(char));
+
+	// read acknowledgement
+	if (sconn->readPort(returnstr, sizeof(sendstr)/sizeof(char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "could not read from serial connection"
+								  << sendLog;
+		return -1;
+	}
+
+	// debug only
+	// ss.str(std::string());
+	// for (i=0; i<sizeof(returnstr)/sizeof(char); ++i)
+	// 	ss << std::hex << (int)returnstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "received acknowledgement "
+	//                           << _buf << sendLog;
+
+	// switch RTS bit to receive results
+	sconn->switchRTS();
+
+	// read reply
+	if (sconn->readPort(returnstr, sizeof(returnstr)/sizeof(char)) == -1)
+	{
+		sconn->switchRTS();
+		return -1;
+	}
+
+	// check checksum
+	chksum = 0;
+	for (i=1; i<(sizeof(returnstr)/sizeof(char)-1); i++)
+		chksum += (unsigned int)returnstr[i];
+	chksum = -chksum & 0xff;
+
+	// // debug only
+	// ss.str(std::string());
+	// for (i=0; i<sizeof(returnstr)/sizeof(char); ++i)
+	// 	ss << std::hex << (int)returnstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "received result "  << _buf << sendLog;
+	
+	if ((int)(unsigned char)returnstr[8] != chksum)
+	{
+		sconn->switchRTS();
+		logStream (MESSAGE_ERROR) << "result checksum corrupt" << sendLog;
+		return -1;
+	}
+	
+	// switch RTS bit to enable requests again
+	sconn->switchRTS();
+
+	int b0 = (unsigned char) returnstr[5];
+  	int b1 = (unsigned char) returnstr[6];
+  	int b2 = (unsigned char) returnstr[7];
+  	float focus = (256*256*b0 + 256*b1 + b2)/FOCUSER_TICKS_PER_MICRON;
+
+	// logStream (MESSAGE_DEBUG) << "resulting focus position " << focus <<
+	//  	sendLog;
+	
+	position->setValueInteger(focus);
+	sendValueAll(position);
 	return 0;
 	
 }
