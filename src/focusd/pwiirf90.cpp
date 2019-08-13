@@ -26,12 +26,16 @@
 #define FOCUSSCALE       11.513442 
 #define FOCUSDIR            1
 
-#define FOCUSER_TICKS_PER_MICRON  207.288
+#define TICKS_PER_MICRON  207.288
+#define GOTO2_THRESHOLD_TICKS  50000
+#define FULL_TRACK_RATE  3955050
 
 //#define FOCUSERPORT "/dev/IRF" 
 
 namespace rts2focusd
 {
+
+typedef enum { IDLE, MOVING_IN, MOVING_OUT, GOTOPOS2 } stateType;
 
 /**
  * Class for planewave IRF90 focuser. 
@@ -51,33 +55,35 @@ class PWIIRF90:public Focusd
 		virtual double tcOffset () {return 0.;};
 		virtual int isFocusing ();
 		virtual int info ();
-
+		
 	protected:
 		virtual int processOption (int opt);
 		virtual int initValues ();
 
 		virtual int setValue (rts2core::Value *old_value, rts2core::Value *new_value);
-
 		virtual bool isAtStartPosition () { return false; }
-
+		stateType state;
+		
 	private:
 		void getValue(const char *name, rts2core::Value *val);
-		int findOptima ();
+		//int findOptima ();
 		
-		int getPos ();
-		int getTemp ();
-		int setFan (int fancmod);
+		int getPos();
+		int getTemp();
+		int setFan(int fancmod);
 		int GetTemperature(double *teltemperature, int tempsensor);
-		int focusdir;  /*  use -1 if focuser moves in opposite direcion */
+		int focusdir;
 		
-		int SetHedrickFocuser (int focuscmd, int focusspd);
-		
+		int MoveFocuser(int focdir);
+		int GotoPos2(long targetTicks);
+
 		char buf[15];
 		const char *device_file;
 		
 		rts2core::ConnSerial *sconn;
 		rts2core::ValueFloat *TempM1;
 		rts2core::ValueFloat *TempAmbient;
+		rts2core::ValueFloat *FocusState;
 		rts2core::ValueBool *fanMode;
 
 };
@@ -102,7 +108,12 @@ PWIIRF90::PWIIRF90 (int argc, char **argv):Focusd (argc, argv)
 	createValue (fanMode, "FANMODE", "Fan ON? : TRUE/FALSE", false,
 				 RTS2_VALUE_WRITABLE);
 		
-	setFocusExtent (-1000, 30000);
+	setFocusExtent (1000, 30000);
+
+	state = IDLE;
+	
+	createValue (FocusState, "focuser_state",
+				 "-1: moving in; 0: idle; 1: moving out, 2: goto", true);
 	
 	addOption ('f', NULL, 1, "device file (usually /dev/IRF)");
 }
@@ -128,12 +139,13 @@ int PWIIRF90::processOption (int opt)
 
 int PWIIRF90::initValues ()
 {
-	focusdir = 1; /* use -1 if focuse moves in opposite direction */
+	focusdir = 1;
 	
 	return Focusd::initValues ();
 }
 
-int PWIIRF90::setValue (rts2core::Value *old_value, rts2core::Value *new_value)
+int PWIIRF90::setValue (rts2core::Value *old_value,
+						rts2core::Value *new_value)
 {
 	if (old_value == fanMode)
 	{
@@ -149,16 +161,15 @@ int PWIIRF90::setFan(int fancmd)
 	std::stringstream ss;
 	std::string _buf;
 	int i;
-	unsigned int chksum = 0;
+	unsigned int chksum;
 	unsigned char sendstr[] = { 0x3b, 0x04, 0x20, 0x13, 0x27, 0x00, 0x00 };
 	// have to update sendstr[5] (on/off) and sendstr[6] (checksum)
-	char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
-	// have to update sendstr[5] (sensor) and sendstr[6] (checksum)
+	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 	sendstr[5] = fancmd;
 	
 	// derive and update checksum byte
 	// exclude start of message and chksum bytes
-	for (i=1; i<(sizeof(sendstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(sendstr)/sizeof(char)-1); i++)
 		chksum += (unsigned int)sendstr[i];
 	chksum = -chksum & 0xff;
 	sendstr[6] = chksum;
@@ -174,26 +185,25 @@ int PWIIRF90::setFan(int fancmd)
 	sconn->writePort((const char*)(&sendstr), sizeof(sendstr)/sizeof(char));
 
 	// read acknowledgement
-	if (sconn->readPort(returnstr, 7) == -1)
+	if (sconn->readPort((char*)returnstr, 7) == -1)
 	{
 		logStream (MESSAGE_ERROR) << "could not read from serial connection"
 								  << sendLog;
 		return -1;
 	}
 
-		// switch RTS bit to receive results
+	// switch RTS bit to receive results
 	sconn->switchRTS();
 
 	// read reply
-	if (sconn->readPort(returnstr, sizeof(returnstr)/sizeof(char)) == -1)
+	if (sconn->readPort((char*)returnstr, sizeof(returnstr)/sizeof(char)) == -1)
 	{
 		sconn->switchRTS();
 		return -1;
 	}
 
 	// check checksum
-	chksum = 0;
-	for (i=1; i<(sizeof(returnstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(char)-1); i++)
 		chksum += (unsigned int)returnstr[i];
 	chksum = -chksum & 0xff;
 
@@ -223,15 +233,15 @@ int PWIIRF90::GetTemperature(double *temp, int tempsensor=0)
 	std::stringstream ss;
 	std::string _buf;
 	int i;
-	unsigned int chksum = 0;
+	unsigned int chksum;
 	unsigned char sendstr[] = { 0x3b, 0x04, 0x20, 0x12, 0x26, 0x00, 0x00 };
-	char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
 	// have to update sendstr[5] (sensor) and sendstr[6] (checksum)
 	sendstr[5] = tempsensor;
 	
 	// derive and update checksum byte
 	// exclude start of message and chksum bytes
-	for (i=1; i<(sizeof(sendstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(sendstr)/sizeof(char)-1); i++)
 		chksum += (unsigned int)sendstr[i];
 	chksum = -chksum & 0xff;
 	sendstr[6] = chksum;
@@ -247,7 +257,7 @@ int PWIIRF90::GetTemperature(double *temp, int tempsensor=0)
 	sconn->writePort((const char*)(&sendstr), sizeof(sendstr)/sizeof(char));
 
 	// read acknowledgement
-	if (sconn->readPort(returnstr, 7) == -1)
+	if (sconn->readPort((char*)returnstr, 7) == -1)
 	{
 		logStream (MESSAGE_ERROR) << "could not read from serial connection"
 								  << sendLog;
@@ -266,15 +276,14 @@ int PWIIRF90::GetTemperature(double *temp, int tempsensor=0)
 	sconn->switchRTS();
 
 	// read reply
-	if (sconn->readPort(returnstr, sizeof(returnstr)/sizeof(char)) == -1)
+	if (sconn->readPort((char*)returnstr, sizeof(returnstr)/sizeof(char)) == -1)
 	{
 		sconn->switchRTS();
 		return -1;
 	}
 
 	// check checksum
-	chksum = 0;
-	for (i=1; i<(sizeof(returnstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(char)-1); i++)
 		chksum += (unsigned int)returnstr[i];
 	chksum = -chksum & 0xff;
 
@@ -306,123 +315,258 @@ int PWIIRF90::GetTemperature(double *temp, int tempsensor=0)
 	
 	return 0;
 }
- 
-int PWIIRF90::SetHedrickFocuser(int focuscmd, int focusspd)
+
+// set track rate of focuser
+// focdir: -1=move in, 0=stop, 1=move out
+int PWIIRF90::MoveFocuser(int focdir)
 {
-	logStream (MESSAGE_ERROR) << "in set hedrick" << sendLog;
+	int i;
+	int chksum;
+	std::stringstream ss;
+	std::string _buf;
+	unsigned char sendstr[] = { 0x3b, 0x06, 0x20, 0x12, 0x00,
+					   0x00, 0x00, 0x00, 0x00 };
+	unsigned char acknstr[] = { 0x3b, 0x06, 0x20, 0x12, 0x00,
+					   0x00, 0x00, 0x00, 0x00 };
 
-	char sendstr[] = { 0x50, 0x02, 0x12, 0x24, 0x01, 0x00, 0x00, 0x00 };
-	char returnstr[2048];
+    // have to modify sendstr[4] with move direction, sendstr[5-7] with
+	// encoded focusspd and sendstr[8] with chksum
+	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+	unsigned long focusspd;
 	
-	/* Set the speed */
-
-	sendstr[4] = 0x08;
-
-	if (focusspd >= 4)
+	// set focus (move) direction
+	if (focdir > 0)
 	{
-		sendstr[4] = 0x08;
-	}
-	
-	if (focusspd == 3)
-	{
+		//logStream (MESSAGE_DEBUG) << "moving focuser out" << sendLog;
 		sendstr[4] = 0x06;
+		focusspd = (unsigned long)(FULL_TRACK_RATE);
 	}
-	
-	if (focusspd == 2)
+	else if (focdir < 0)
 	{
-		sendstr[4] = 0x04;
+		//logStream (MESSAGE_DEBUG) << "moving focuser out" << sendLog;
+		sendstr[4] = 0x07;
+		focusspd = (unsigned long)(FULL_TRACK_RATE);
 	}
-	
-	if (focusspd == 1)
+	else
 	{
-		sendstr[4] = 0x02;
-	}
-	  
-	if ( focuscmd == -1 )
-	{
-		/* Run the focus motor in */
-		/* Set the direction based on focusdir */
-		
-		if (focusdir > 0)
-		{
-			sendstr[3] = 0x25;
-		}
+		if (state == MOVING_IN)
+			sendstr[4] = 0x07;
+		else if (state == MOVING_OUT)
+			sendstr[4] = 0x06;
 		else
-		{
-			sendstr[3] = 0x24;
-		}
-			      
-		/* Send the command */
-		/* Wait up to a second for an acknowledgement */
+			sendstr[4] = 0x06;
+		focusspd = 0;		
+	}
 		
-		for (;;) 
-		{
-			if ( sconn->writeRead(sendstr,8,returnstr,1) ) 
-			{
-				if (returnstr[0] == '#')
-					break;
-			}
-			else 
-			{ 
-				fprintf(stderr,"No acknowledgement from focuser\n");
-			}
-		}	    
+	// encode focusspd
+	int b0, b1, b2;
+	b0 = floor(focusspd/(256*256));
+	focusspd -= 256*256*b0;
+	b1 = floor(focusspd/256);
+	b2 = focusspd-b1*256;
+
+	// set focus speed
+	sendstr[5] = b0;
+	sendstr[6] = b1;
+	sendstr[7] = b2;
+
+	// derive and update checksum byte
+	// exclude start of message and chksum bytes
+	for (i=1, chksum=0; i<(sizeof(sendstr)/sizeof(char)-1); i++)
+		chksum += (unsigned int)sendstr[i];
+	chksum = -chksum & 0xff;
+	sendstr[8] = (unsigned char)chksum;
+
+	logStream (MESSAGE_ERROR) << "checksum" << chksum << sendLog;
+	
+	// debug only
+	for (i=0; i<sizeof(sendstr)/sizeof(char); ++i)
+		ss << std::hex << (int)sendstr[i] << " ";
+	_buf = ss.str();
+	logStream (MESSAGE_DEBUG) << "send command "  << _buf << sendLog;
+
+	// send command
+	sconn->flushPortIO();
+	sconn->writePort((const char*)(&sendstr), sizeof(sendstr)/sizeof(char));
+
+	// read acknowledgement
+	if (sconn->readPort((char*)acknstr, sizeof(acknstr)/sizeof(char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "MoveFocus: cannot read acknowledgement"
+								  << sendLog;
+		return -1;
+	}
+
+	if ((focdir > 0) && (focusspd > 0))
+		state = MOVING_IN;
+	else if ((focdir < 0) && (focusspd > 0))
+		state = MOVING_OUT;
+	else if (focusspd == 0)
+		state = IDLE;
+	else
+	{
+		logStream (MESSAGE_ERROR) << "current focuser state unknown"
+								  << sendLog;
+		return -1;
+	}
+
+	
+	// // debug only
+	// ss.str(std::string());
+	// for (i=0; i<sizeof(acknstr)/sizeof(char); ++i)
+	// 	ss << std::hex << (int)acknstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "received acknowledgement "
+	//                           << _buf << sendLog;
+
+	// switch RTS bit to receive results
+	sconn->switchRTS();
+
+	// read reply
+	if (sconn->readPort((char*)returnstr, sizeof(returnstr)/sizeof(char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "MoveFocus: cannot read return"
+								  << sendLog;
+		sconn->switchRTS();
+		return -1;
+	}
+
+	// switch RTS bit to enable requests again
+	sconn->switchRTS();
+	
+	// check checksum
+	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(char)-1); i++)
+		chksum += (unsigned int)returnstr[i];
+	chksum = -chksum & 0xff;
+	
+	// // debug only
+	// ss.str(std::string());
+	// for (i=0; i<sizeof(returnstr)/sizeof(char); ++i)
+	// 	ss << std::hex << (int)returnstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "received result "  << _buf << sendLog;
+	
+	if ((int)(unsigned char)returnstr[6] != chksum)
+	{
+		sconn->switchRTS();
+		logStream (MESSAGE_ERROR) << "result checksum corrupt" << sendLog;
+		return -1;
 	}
 	
-	if ( focuscmd == 1 )
-	{  
-		/* Run the focus motor out */
-		/* Set the direction based on focusdir */
-		if (focusdir > 0)
-		{
-			sendstr[3] = 0x24;
-		}
-		else
-		{
-			sendstr[3] = 0x25;
-		}
-	      
-		/* Send the command */
-		/* Wait up to a second for an acknowledgement */
-	  
-		for (;;) 
-		{
-			if (sconn->writeRead(sendstr,8,returnstr,1))
-			{
-				if (returnstr[0] == '#')
-					break;
-			}
-			else 
-			{ 
-				fprintf(stderr,"No acknowledgement from focus control\n");
-			}
-		}      
-	}
-	 
-	if (focuscmd == 0)
-	{
-		/* Set the speed to zero to stop the motion */
-	  
-		sendstr[4] = 0x00;
-	  
-		/* Send the command */
-		/* Wait up to a second for an acknowledgement */
-	  
-		for (;;) 
-		{
-			if (sconn->writeRead(sendstr,8,returnstr,1))
-			{
-				if (returnstr[0] == '#')
-					break;
-			}
-			else 
-			{ 
-				fprintf(stderr,"No acknowledgement from focuser\n");
-			}
-		}            
-	}  
+	
 	return 0;
 }
+
+
+// order focuser to go to exact position using IRF90 command gotopos2
+// don't use this function for long moves, it takes too long
+int PWIIRF90::GotoPos2(long targetTicks)
+{
+	logStream (MESSAGE_ERROR) << "in gotopos2" << sendLog;
+
+	state = GOTOPOS2;
+	
+	int i;
+	unsigned int chksum;
+	std::stringstream ss;
+	std::string _buf;
+	unsigned char sendstr[] = { 0x3b, 0x06, 0x20, 0x12, 0x17,
+					   0x00, 0x00, 0x00, 0x00 };
+	unsigned char acknstr[] = { 0x3b, 0x06, 0x20, 0x12, 0x17,
+					   0x00, 0x00, 0x00, 0x00 };
+
+    // have to modify sendstr[5-7] with
+	// encoded target position and sendstr[8] with chksum
+	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+		
+	// encode target position1
+	int b0, b1, b2;
+	b0 = floor(targetTicks/(256*256));
+	targetTicks -= 256*256*b0;
+	b1 = floor(targetTicks/256);
+	b2 = targetTicks-b1*256;
+
+	// set target position
+	sendstr[5] = b0;
+	sendstr[6] = b1;
+	sendstr[7] = b2;
+
+	// derive and update checksum byte
+	// exclude start of message and chksum bytes
+	for (i=1, chksum=0; i<(sizeof(sendstr)/sizeof(char)-1); i++)
+	{
+		chksum += (unsigned int)sendstr[i];
+		logStream (MESSAGE_ERROR) << "adding  " << (unsigned int)sendstr[i] << sendLog;
+	}
+	chksum = -chksum & 0xff;
+	sendstr[8] = (unsigned char)chksum;
+
+	logStream (MESSAGE_ERROR) << "chksum  " << chksum << sendLog;
+
+	
+	// debug only
+	for (i=0; i<sizeof(sendstr)/sizeof(char); ++i)
+		ss << std::hex << (int)sendstr[i] << " ";
+	_buf = ss.str();
+	logStream (MESSAGE_DEBUG) << "send command " << _buf << sendLog;
+
+	// send command
+	sconn->flushPortIO();
+	sconn->writePort((const char*)(&sendstr), sizeof(sendstr)/sizeof(char));
+
+	// read acknowledgement
+	if (sconn->readPort((char*)acknstr, sizeof(acknstr)/sizeof(char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "could not read from serial connection"
+								  << sendLog;
+		return -1;
+	}
+	
+	// debug only
+	ss.str(std::string());
+	for (i=0; i<sizeof(acknstr)/sizeof(char); ++i)
+		ss << std::hex << (int)acknstr[i] << " ";
+	_buf = ss.str();
+	logStream (MESSAGE_DEBUG) << "received acknowledgement "
+	                          << _buf << sendLog;
+
+	// switch RTS bit to receive results
+	sconn->switchRTS();
+
+	// read reply
+	if (sconn->readPort((char*)returnstr, sizeof(returnstr)/sizeof(char)) == -1)
+	{
+		sconn->switchRTS();
+		return -1;
+	}
+
+	// switch RTS bit to enable requests again
+	sconn->switchRTS();
+	
+	// check checksum
+	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(char)-1); i++)
+		chksum += (unsigned int)returnstr[i];
+	chksum = -chksum & 0xff;
+	
+	// debug only
+	ss.str(std::string());
+	for (i=0; i<sizeof(returnstr)/sizeof(char); ++i)
+		ss << std::hex << (int)returnstr[i] << " ";
+	_buf = ss.str();
+	logStream (MESSAGE_DEBUG) << "received result "  << _buf << sendLog;
+	
+	if ((int)(unsigned char)returnstr[6] != chksum)
+	{
+		sconn->switchRTS();
+		logStream (MESSAGE_ERROR) << "result checksum corrupt" << sendLog;
+		return -1;
+	}
+	
+	
+	return 0;
+}
+
+
 
 
 // send focus to given position
@@ -434,72 +578,68 @@ int PWIIRF90::setTo (double num)
 	return 0;
 }
 
+
+// report state of the focuser
 int PWIIRF90::isFocusing ()
 {
-	float pos_diff =position->getValueDouble() - target->getValueDouble();
-	float abspos_diff = fabs(pos_diff);
-	int focspeed = 4;
-	int focdir = 0;
+	// update position
+	if (getPos() < 0)
+		return -1;
 
-	/* Focus speed values   */
-	/*                      */
-	/* Fast     4           */
-	/* Medium   3           */
-	/* Slow     2           */
-	/* Precise  1           */
-  
-	/* Focus command values */
-	/*                      */
-	/* Out     +1           */
-	/* In      -1           */
-	/* Off      0           */
+	//logStream (MESSAGE_ERROR) << "focstate " << state << sendLog;
 
-	pos_diff = position->getValueDouble() - target->getValueDouble();
-	abspos_diff = fabs(pos_diff);
+    // target and position in microns, convert to ticks
+	double targetTicks = target->getValueDouble() * TICKS_PER_MICRON;
+	double currentPosTicks = position->getValueDouble() * TICKS_PER_MICRON;
+	double abspos_diff = fabs(targetTicks - currentPosTicks);
 
-	if (abspos_diff <= 1)
-	{
-		SetHedrickFocuser(0,0);
-		return -2;
-	}
-
-	//  focuser is not at target - so move the focuser here
-	focspeed = 4;   // assume it is at large deviation and needs highest speed... 
-
-	if (pos_diff > 0)
-		focdir = -1;
-	if (pos_diff < 0)
+	// define focus direction	
+	int focdir = 0;  
+	if (targetTicks > currentPosTicks)
 		focdir = 1;
+	else
+		focdir = -1;
 
-	if (abspos_diff < 1000)
-		focspeed = 3;
-		
-	if (abspos_diff < 50)
-		focspeed = 2;
-		
-	if (abspos_diff < 10)
-		focspeed = 1;
-		
-	if (abspos_diff <= 1)
+	logStream (MESSAGE_ERROR) << "abspos_diff " << abspos_diff << sendLog;
+	
+	// focuser arrived within 1 micron at target position; focusing finished
+	if ((state == GOTOPOS2) && (abspos_diff <= 5))
 	{
-		focspeed = 0;
-		focdir = 0;
-		abspos_diff = 0;
-	}
-				
-	//	logStream (MESSAGE_DEBUG) << "changing position from " << position->getValueDouble () << " to " << target->getValueDouble() << sendLog;
-	//	logStream (MESSAGE_DEBUG) << "focus speed " << focspeed << " and focus direction " << focdir << sendLog;
-	//	logStream (MESSAGE_DEBUG) << "abspos_diff " << abspos_diff << " pos_diff " << pos_diff << sendLog;
+		logStream (MESSAGE_ERROR) << "arrived at target position" << sendLog;
 		
-	SetHedrickFocuser (focdir, focspeed);  // for a fixed duration 
-	getPos ();   // get new position 
-
-	if (fabs(target->getValueInteger () - position->getValueInteger ()) <= 1)
-	{
-		SetHedrickFocuser(0,0);
+		if (state != IDLE)
+			MoveFocuser(0);
+		
 		return -2;
 	}
-	return 0;
+
+	// focuser not at target; commence focusing
+	/* logic here taken from IRF90 Python 2.7 library by Kevin Ivarsen
+	    idea is to move focuser to within GOTO2_THRESHOLD_TICKS
+		of target position, then use GOTO2 (IRF90 command) to 
+		do the rest; GOTO2 is more precise, but also slower
+	*/
+	double targetBeforeGoto2 = targetTicks - focdir * GOTO2_THRESHOLD_TICKS;
+	double remainingTicksBeforeStop = focdir * (targetBeforeGoto2 -
+												currentPosTicks);
+
+	//logStream (MESSAGE_ERROR) << "ticks before goto2 " << remainingTicksBeforeStop << sendLog;
+	
+	// move towards the target position
+	if ((remainingTicksBeforeStop > 0) && (state == IDLE))
+	{
+		logStream (MESSAGE_ERROR) << "moving in large steps; dir " << focdir << sendLog;
+		MoveFocuser(focdir);
+	}
+	else if ((remainingTicksBeforeStop <= 0) && (state != IDLE))
+	{
+		// now we're close enough to use gotopos2
+		logStream (MESSAGE_ERROR) << "using gotopos2" << sendLog;
+		GotoPos2(targetTicks);
+	}
+
+	return 1;
+
 }
 
 
@@ -533,8 +673,10 @@ int PWIIRF90::getTemp ()
 int PWIIRF90::info ()
 {
 	getPos();
-	getTemp(); 
+	getTemp();
 
+	FocusState->setValueFloat(state);
+	
 	return Focusd::info();
 }
 
@@ -585,8 +727,7 @@ int PWIIRF90::getPos ()
 	}
 
 	// check checksum
-	chksum = 0;
-	for (i=1; i<(sizeof(returnstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(char)-1); i++)
 		chksum += (unsigned int)returnstr[i];
 	chksum = -chksum & 0xff;
 
@@ -610,7 +751,7 @@ int PWIIRF90::getPos ()
 	int b0 = (unsigned char) returnstr[5];
   	int b1 = (unsigned char) returnstr[6];
   	int b2 = (unsigned char) returnstr[7];
-  	float focus = (256*256*b0 + 256*b1 + b2)/FOCUSER_TICKS_PER_MICRON;
+  	float focus = (256*256*b0 + 256*b1 + b2)/TICKS_PER_MICRON;
 
 	// logStream (MESSAGE_DEBUG) << "resulting focus position " << focus <<
 	//  	sendLog;
@@ -635,6 +776,8 @@ int PWIIRF90::init ()
 
 	sconn->flushPortIO();
 
+	setIdleInfoInterval(10);
+	
 	/* communications protocol:
 	   ========================
 	   messages are hex of the form:
