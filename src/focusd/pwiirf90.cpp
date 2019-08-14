@@ -22,15 +22,9 @@
 #include "focusd.h"
 #include "connection/serial.h"
 
-// planewave leftovers
-#define FOCUSSCALE       11.513442 
-#define FOCUSDIR            1
-
 #define TICKS_PER_MICRON  207.288
 #define GOTO2_THRESHOLD_TICKS  50000
 #define FULL_TRACK_RATE  3955050
-
-//#define FOCUSERPORT "/dev/IRF" 
 
 namespace rts2focusd
 {
@@ -38,7 +32,7 @@ namespace rts2focusd
 typedef enum { IDLE, MOVING_IN, MOVING_OUT, GOTOPOS2 } stateType;
 
 /**
- * Class for planewave IRF90 focuser. 
+ * Class for Planewave IRF90 focuser. 
  *
  * @author Michael Mommert <mommermiscience@gmail.com>
  * @author Petr Kubanek <petr@kubanek.net>
@@ -60,7 +54,8 @@ class PWIIRF90:public Focusd
 		virtual int processOption (int opt);
 		virtual int initValues ();
 
-		virtual int setValue (rts2core::Value *old_value, rts2core::Value *new_value);
+		virtual int setValue (rts2core::Value *old_value,
+							  rts2core::Value *new_value);
 		virtual bool isAtStartPosition () { return false; }
 		stateType state;
 		
@@ -71,13 +66,13 @@ class PWIIRF90:public Focusd
 		int getPos();
 		int getTemp();
 		int setFan(int fancmod);
+		int getFan();
 		int GetTemperature(double *teltemperature, int tempsensor);
-		int focusdir;
 		
 		int MoveFocuser(int focdir);
 		int GotoPos2(long targetTicks);
+		int IsGotoDone();
 
-		char buf[15];
 		const char *device_file;
 		
 		rts2core::ConnSerial *sconn;
@@ -85,7 +80,6 @@ class PWIIRF90:public Focusd
 		rts2core::ValueFloat *TempAmbient;
 		rts2core::ValueFloat *FocusState;
 		rts2core::ValueBool *fanMode;
-
 };
 
 }
@@ -108,19 +102,19 @@ PWIIRF90::PWIIRF90 (int argc, char **argv):Focusd (argc, argv)
 	createValue (fanMode, "FANMODE", "Fan ON? : TRUE/FALSE", false,
 				 RTS2_VALUE_WRITABLE);
 		
-	setFocusExtent (1000, 30000);
+	setFocusExtent (1000, 30000);  // focus range in microns
 
-	state = IDLE;
+	state = IDLE;  // start in idle state
 	
 	createValue (FocusState, "focuser_state",
-				 "-1: moving in; 0: idle; 1: moving out, 2: goto", true);
+				 "0: moving in; 1: idle; 2: moving out, 3: goto", true);
 	
 	addOption ('f', NULL, 1, "device file (usually /dev/IRF)");
 }
 
 PWIIRF90::~PWIIRF90 ()
 {
-	//delete sconn;
+	delete sconn;
 }
 
 int PWIIRF90::processOption (int opt)
@@ -139,8 +133,6 @@ int PWIIRF90::processOption (int opt)
 
 int PWIIRF90::initValues ()
 {
-	focusdir = 1;
-	
 	return Focusd::initValues ();
 }
 
@@ -164,30 +156,38 @@ int PWIIRF90::setFan(int fancmd)
 	unsigned int chksum;
 	unsigned char sendstr[] = { 0x3b, 0x04, 0x20, 0x13, 0x27, 0x00, 0x00 };
 	// have to update sendstr[5] (on/off) and sendstr[6] (checksum)
-	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00,
+								  0x00, 0x00, 0x00 };
 	sendstr[5] = fancmd;
 	
 	// derive and update checksum byte
 	// exclude start of message and chksum bytes
-	for (i=1, chksum=0; i<(sizeof(sendstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(sendstr)/sizeof(unsigned char)-1); i++)
 		chksum += (unsigned int)sendstr[i];
 	chksum = -chksum & 0xff;
 	sendstr[6] = chksum;
 
 	// // debug only
-	// for (i=0; i<sizeof(sendstr)/sizeof(char); ++i)
+	// for (i=0; i<sizeof(sendstr)/sizeof(unsigned char); ++i)
 	// 	ss << std::hex << (int)sendstr[i] << " ";
 	// _buf = ss.str();
 	// logStream (MESSAGE_DEBUG) << "send command "  << _buf << sendLog;
 	
 	// send command
 	sconn->flushPortIO();
-	sconn->writePort((const char*)(&sendstr), sizeof(sendstr)/sizeof(char));
-
+	if (sconn->writePort((const char*)(&sendstr),
+						 sizeof(sendstr)/sizeof(unsigned char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "setFan: cannot send command"
+								  << sendLog;
+		return -1;
+	}
+		
+	
 	// read acknowledgement
 	if (sconn->readPort((char*)returnstr, 7) == -1)
 	{
-		logStream (MESSAGE_ERROR) << "could not read from serial connection"
+		logStream (MESSAGE_ERROR) << "setFan: cannot read acknowledgement"
 								  << sendLog;
 		return -1;
 	}
@@ -196,8 +196,11 @@ int PWIIRF90::setFan(int fancmd)
 	sconn->switchRTS();
 
 	// read reply
-	if (sconn->readPort((char*)returnstr, sizeof(returnstr)/sizeof(char)) == -1)
+	if (sconn->readPort((char*)returnstr,
+						sizeof(returnstr)/sizeof(unsigned char)) == -1)
 	{
+		logStream (MESSAGE_ERROR) << "setFan: cannot read return"
+								  << sendLog;
 		sconn->switchRTS();
 		return -1;
 	}
@@ -209,7 +212,7 @@ int PWIIRF90::setFan(int fancmd)
 
 	// // debug only
 	// ss.str(std::string());
-	// for (i=0; i<sizeof(returnstr)/sizeof(char); ++i)
+	// for (i=0; i<sizeof(returnstr)/sizeof(unsigned char); ++i)
 	// 	ss << std::hex << (int)returnstr[i] << " ";
 	// _buf = ss.str();
 	// logStream (MESSAGE_DEBUG) << "received result "  << _buf << sendLog;
@@ -228,6 +231,91 @@ int PWIIRF90::setFan(int fancmd)
 	return 0;
 }    
 
+int PWIIRF90::getFan()
+{
+	std::stringstream ss;
+	std::string _buf;
+	int i;
+	unsigned int chksum;
+	unsigned char sendstr[] = { 0x3b, 0x03, 0x20, 0x13, 0x28, 0xa2 };
+	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00,
+								  0x00, 0x00, 0x00 };
+
+	// // debug only
+	// for (i=0; i<sizeof(sendstr)/sizeof(unsigned char); ++i)
+	// 	ss << std::hex << (int)sendstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "send command "  << _buf << sendLog;
+	
+	// send command
+	sconn->flushPortIO();
+	if (sconn->writePort((const char*)(&sendstr),
+						 sizeof(sendstr)/sizeof(unsigned char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "getFan: cannot send command"
+								  << sendLog;
+		return -1;
+	}
+		
+	
+	// read acknowledgement
+	if (sconn->readPort((char*)returnstr, 6) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "getFan: cannot read acknowledgement"
+								  << sendLog;
+		return -1;
+	}
+
+	// switch RTS bit to receive results
+	sconn->switchRTS();
+
+	// read reply
+	if (sconn->readPort((char*)returnstr,
+						sizeof(returnstr)/sizeof(unsigned char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "getFan: cannot read return"
+								  << sendLog;
+		sconn->switchRTS();
+		return -1;
+	}
+
+	// check checksum
+	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(unsigned char)-1); i++)
+		chksum += (unsigned int)returnstr[i];
+	chksum = -chksum & 0xff;
+
+	// // debug only
+	// ss.str(std::string());
+	// for (i=0; i<sizeof(returnstr)/sizeof(unsigned char); ++i)
+	// 	ss << std::hex << (int)returnstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "received result "  << _buf << sendLog;
+	
+	if ((int)(unsigned char)returnstr[6] != chksum)
+	{
+		sconn->switchRTS();
+		logStream (MESSAGE_ERROR) << "getFan: result checksum corrupt"
+								  << sendLog;
+		return -1;
+	}
+	
+	// switch RTS bit to enable requests again
+	sconn->switchRTS();
+
+	if (returnstr[5] == 3)
+		fanMode->setValueBool(0);  // fan off
+	else if (returnstr[5] == 0)
+		fanMode->setValueBool(1);  // fan on
+	else
+	{
+		logStream (MESSAGE_ERROR) << "getFan: return value unclear"
+								  << sendLog;
+		return -1;
+	}
+	return 0;
+}    
+
+
 int PWIIRF90::GetTemperature(double *temp, int tempsensor=0)
 {
 	std::stringstream ss;
@@ -235,38 +323,46 @@ int PWIIRF90::GetTemperature(double *temp, int tempsensor=0)
 	int i;
 	unsigned int chksum;
 	unsigned char sendstr[] = { 0x3b, 0x04, 0x20, 0x12, 0x26, 0x00, 0x00 };
-	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00,
+								  0x00, 0x00, 0x00, 0x00 };
 	// have to update sendstr[5] (sensor) and sendstr[6] (checksum)
 	sendstr[5] = tempsensor;
 	
 	// derive and update checksum byte
 	// exclude start of message and chksum bytes
-	for (i=1, chksum=0; i<(sizeof(sendstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(sendstr)/sizeof(unsigned char)-1); i++)
 		chksum += (unsigned int)sendstr[i];
 	chksum = -chksum & 0xff;
 	sendstr[6] = chksum;
 
 	// debug only
-	// for (i=0; i<sizeof(sendstr)/sizeof(char); ++i)
+	// for (i=0; i<sizeof(sendstr)/sizeof(unsigned char); ++i)
 	// 	ss << std::hex << (int)sendstr[i] << " ";
 	// _buf = ss.str();
 	// logStream (MESSAGE_DEBUG) << "send command "  << _buf << sendLog;
 	
 	// send command
 	sconn->flushPortIO();
-	sconn->writePort((const char*)(&sendstr), sizeof(sendstr)/sizeof(char));
+	if (sconn->writePort((const char*)(&sendstr),
+						 sizeof(sendstr)/sizeof(unsigned char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "GetTemperature: cannot send command"
+								  << sendLog;
+		return -1;
+	}
 
 	// read acknowledgement
 	if (sconn->readPort((char*)returnstr, 7) == -1)
 	{
-		logStream (MESSAGE_ERROR) << "could not read from serial connection"
-								  << sendLog;
+		logStream (MESSAGE_ERROR)
+			<< "GetTemperature: cannot read acknowledgement"
+			<< sendLog;
 		return -1;
 	}
 
 	// debug only
 	// ss.str(std::string());
-	// for (i=0; i<sizeof(returnstr)/sizeof(char); ++i)
+	// for (i=0; i<sizeof(returnstr)/sizeof(unsigned char); ++i)
 	// 	ss << std::hex << (int)returnstr[i] << " ";
 	// _buf = ss.str();
 	// logStream (MESSAGE_DEBUG) << "received acknowledgement "
@@ -276,20 +372,23 @@ int PWIIRF90::GetTemperature(double *temp, int tempsensor=0)
 	sconn->switchRTS();
 
 	// read reply
-	if (sconn->readPort((char*)returnstr, sizeof(returnstr)/sizeof(char)) == -1)
+	if (sconn->readPort((char*)returnstr,
+						sizeof(returnstr)/sizeof(unsigned char)) == -1)
 	{
+		logStream (MESSAGE_ERROR) << "GetTemperature: cannot read return"
+								  << sendLog;
 		sconn->switchRTS();
 		return -1;
 	}
 
 	// check checksum
-	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(unsigned char)-1); i++)
 		chksum += (unsigned int)returnstr[i];
 	chksum = -chksum & 0xff;
 
 	// // debug only
 	// ss.str(std::string());
-	// for (i=0; i<sizeof(returnstr)/sizeof(char); ++i)
+	// for (i=0; i<sizeof(returnstr)/sizeof(unsigned char); ++i)
 	// 	ss << std::hex << (int)returnstr[i] << " ";
 	// _buf = ss.str();
 	// logStream (MESSAGE_DEBUG) << "received result "  << _buf << sendLog;
@@ -309,10 +408,7 @@ int PWIIRF90::GetTemperature(double *temp, int tempsensor=0)
 				  (int)(unsigned char)returnstr[5]) / 16.0;
 
 	*temp = _temp;
-	
-	// logStream (MESSAGE_DEBUG) << "resulting temperature " << _temp <<
-	// 	sendLog;
-	
+		
 	return 0;
 }
 
@@ -331,7 +427,8 @@ int PWIIRF90::MoveFocuser(int focdir)
 
     // have to modify sendstr[4] with move direction, sendstr[5-7] with
 	// encoded focusspd and sendstr[8] with chksum
-	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00,
+								  0x00, 0x00, 0x00 };
 	unsigned long focusspd;
 	
 	// set focus (move) direction
@@ -372,28 +469,34 @@ int PWIIRF90::MoveFocuser(int focdir)
 
 	// derive and update checksum byte
 	// exclude start of message and chksum bytes
-	for (i=1, chksum=0; i<(sizeof(sendstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(sendstr)/sizeof(unsigned char)-1); i++)
 		chksum += (unsigned int)sendstr[i];
 	chksum = -chksum & 0xff;
 	sendstr[8] = (unsigned char)chksum;
-
-	logStream (MESSAGE_ERROR) << "checksum" << chksum << sendLog;
 	
-	// debug only
-	for (i=0; i<sizeof(sendstr)/sizeof(char); ++i)
-		ss << std::hex << (int)sendstr[i] << " ";
-	_buf = ss.str();
-	logStream (MESSAGE_DEBUG) << "send command "  << _buf << sendLog;
+	// // debug only
+	// for (i=0; i<sizeof(sendstr)/sizeof(unsigned char); ++i)
+	// 	ss << std::hex << (int)sendstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "send command "  << _buf << sendLog;
 
 	// send command
 	sconn->flushPortIO();
-	sconn->writePort((const char*)(&sendstr), sizeof(sendstr)/sizeof(char));
+	if (sconn->writePort((const char*)(&sendstr),
+						 sizeof(sendstr)/sizeof(unsigned char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "MoveFocus: cannot send command"
+								  << sendLog;
+		return -1;
+	}
 
 	// read acknowledgement
-	if (sconn->readPort((char*)acknstr, sizeof(acknstr)/sizeof(char)) == -1)
+	if (sconn->readPort((char*)acknstr,
+						sizeof(acknstr)/sizeof(unsigned char)) == -1)
 	{
-		logStream (MESSAGE_ERROR) << "MoveFocus: cannot read acknowledgement"
-								  << sendLog;
+		logStream (MESSAGE_ERROR)
+			<< "MoveFocus: cannot read acknowledgement"
+			<< sendLog;
 		return -1;
 	}
 
@@ -409,11 +512,12 @@ int PWIIRF90::MoveFocuser(int focdir)
 								  << sendLog;
 		return -1;
 	}
-
+	FocusState->setValueFloat(state);
+	sendValueAll(FocusState);
 	
 	// // debug only
 	// ss.str(std::string());
-	// for (i=0; i<sizeof(acknstr)/sizeof(char); ++i)
+	// for (i=0; i<sizeof(acknstr)/sizeof(unsigned char); ++i)
 	// 	ss << std::hex << (int)acknstr[i] << " ";
 	// _buf = ss.str();
 	// logStream (MESSAGE_DEBUG) << "received acknowledgement "
@@ -423,7 +527,8 @@ int PWIIRF90::MoveFocuser(int focdir)
 	sconn->switchRTS();
 
 	// read reply
-	if (sconn->readPort((char*)returnstr, sizeof(returnstr)/sizeof(char)) == -1)
+	if (sconn->readPort((char*)returnstr,
+						sizeof(returnstr)/sizeof(unsigned char)) == -1)
 	{
 		logStream (MESSAGE_ERROR) << "MoveFocus: cannot read return"
 								  << sendLog;
@@ -435,13 +540,13 @@ int PWIIRF90::MoveFocuser(int focdir)
 	sconn->switchRTS();
 	
 	// check checksum
-	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(unsigned char)-1); i++)
 		chksum += (unsigned int)returnstr[i];
 	chksum = -chksum & 0xff;
 	
 	// // debug only
 	// ss.str(std::string());
-	// for (i=0; i<sizeof(returnstr)/sizeof(char); ++i)
+	// for (i=0; i<sizeof(returnstr)/sizeof(unsigned char); ++i)
 	// 	ss << std::hex << (int)returnstr[i] << " ";
 	// _buf = ss.str();
 	// logStream (MESSAGE_DEBUG) << "received result "  << _buf << sendLog;
@@ -449,7 +554,8 @@ int PWIIRF90::MoveFocuser(int focdir)
 	if ((int)(unsigned char)returnstr[6] != chksum)
 	{
 		sconn->switchRTS();
-		logStream (MESSAGE_ERROR) << "result checksum corrupt" << sendLog;
+		logStream (MESSAGE_ERROR) << "MoveFocus: result checksum corrupt"
+								  << sendLog;
 		return -1;
 	}
 	
@@ -462,9 +568,9 @@ int PWIIRF90::MoveFocuser(int focdir)
 // don't use this function for long moves, it takes too long
 int PWIIRF90::GotoPos2(long targetTicks)
 {
-	logStream (MESSAGE_ERROR) << "in gotopos2" << sendLog;
-
 	state = GOTOPOS2;
+	FocusState->setValueFloat(state);
+	sendValueAll(FocusState);
 	
 	int i;
 	unsigned int chksum;
@@ -477,7 +583,8 @@ int PWIIRF90::GotoPos2(long targetTicks)
 
     // have to modify sendstr[5-7] with
 	// encoded target position and sendstr[8] with chksum
-	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00,
+								  0x00, 0x00, 0x00 };
 		
 	// encode target position1
 	int b0, b1, b2;
@@ -493,49 +600,56 @@ int PWIIRF90::GotoPos2(long targetTicks)
 
 	// derive and update checksum byte
 	// exclude start of message and chksum bytes
-	for (i=1, chksum=0; i<(sizeof(sendstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(sendstr)/sizeof(unsigned char)-1); i++)
 	{
 		chksum += (unsigned int)sendstr[i];
-		logStream (MESSAGE_ERROR) << "adding  " << (unsigned int)sendstr[i] << sendLog;
 	}
 	chksum = -chksum & 0xff;
 	sendstr[8] = (unsigned char)chksum;
-
-	logStream (MESSAGE_ERROR) << "chksum  " << chksum << sendLog;
-
 	
-	// debug only
-	for (i=0; i<sizeof(sendstr)/sizeof(char); ++i)
-		ss << std::hex << (int)sendstr[i] << " ";
-	_buf = ss.str();
-	logStream (MESSAGE_DEBUG) << "send command " << _buf << sendLog;
+	// // debug only
+	// for (i=0; i<sizeof(sendstr)/sizeof(unsigned char); ++i)
+	// 	ss << std::hex << (int)sendstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "send command " << _buf << sendLog;
 
 	// send command
 	sconn->flushPortIO();
-	sconn->writePort((const char*)(&sendstr), sizeof(sendstr)/sizeof(char));
+	if (sconn->writePort((const char*)(&sendstr),
+						 sizeof(sendstr)/sizeof(unsigned char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "GotoPos2: cannot send command"
+								  << sendLog;
+		return -1;
+	}
 
 	// read acknowledgement
-	if (sconn->readPort((char*)acknstr, sizeof(acknstr)/sizeof(char)) == -1)
+	if (sconn->readPort((char*)acknstr,
+						sizeof(acknstr)/sizeof(unsigned char)) == -1)
 	{
-		logStream (MESSAGE_ERROR) << "could not read from serial connection"
+		logStream (MESSAGE_ERROR) << "GotoPos2: cannot read acknowledgement"
 								  << sendLog;
 		return -1;
 	}
 	
-	// debug only
-	ss.str(std::string());
-	for (i=0; i<sizeof(acknstr)/sizeof(char); ++i)
-		ss << std::hex << (int)acknstr[i] << " ";
-	_buf = ss.str();
-	logStream (MESSAGE_DEBUG) << "received acknowledgement "
-	                          << _buf << sendLog;
+	// // debug only
+	// ss.str(std::string());
+	// for (i=0; i<sizeof(acknstr)/sizeof(unsigned char); ++i)
+	// 	ss << std::hex << (int)acknstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "received acknowledgement "
+	//                           << _buf << sendLog;
 
 	// switch RTS bit to receive results
 	sconn->switchRTS();
 
 	// read reply
-	if (sconn->readPort((char*)returnstr, sizeof(returnstr)/sizeof(char)) == -1)
+	if (sconn->readPort((char*)returnstr,
+						sizeof(returnstr)/sizeof(unsigned char)) == -1)
 	{
+		logStream (MESSAGE_ERROR) <<
+			"GotoPos2: cannot read return"
+								  << sendLog;
 		sconn->switchRTS();
 		return -1;
 	}
@@ -544,16 +658,104 @@ int PWIIRF90::GotoPos2(long targetTicks)
 	sconn->switchRTS();
 	
 	// check checksum
-	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(unsigned char)-1); i++)
 		chksum += (unsigned int)returnstr[i];
 	chksum = -chksum & 0xff;
 	
-	// debug only
-	ss.str(std::string());
-	for (i=0; i<sizeof(returnstr)/sizeof(char); ++i)
-		ss << std::hex << (int)returnstr[i] << " ";
-	_buf = ss.str();
-	logStream (MESSAGE_DEBUG) << "received result "  << _buf << sendLog;
+	// // debug only
+	// ss.str(std::string());
+	// for (i=0; i<sizeof(returnstr)/sizeof(unsigned char); ++i)
+	// 	ss << std::hex << (int)returnstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "received result "  << _buf << sendLog;
+	
+	if ((int)(unsigned char)returnstr[6] != chksum)
+	{
+		sconn->switchRTS();
+		logStream (MESSAGE_ERROR) << "GotoPos2: result checksum corrupt"
+								  << sendLog;
+		return -1;
+	}
+	
+	return 0;
+}
+
+
+// checks whether previous gotoPos2 command has finished
+int PWIIRF90::IsGotoDone()
+{
+	int i;
+	unsigned int chksum;
+	std::stringstream ss;
+	std::string _buf;
+	unsigned char sendstr[] = { 0x3b, 0x03, 0x20, 0x12, 0x13, 0xb8 };
+	unsigned char acknstr[] = { 0x3b, 0x03, 0x20, 0x12, 0x13, 0xb8 };
+	unsigned char returnstr[] = { 0x00, 0x00, 0x00, 0x00,
+								  0x00, 0x00, 0x00 };
+
+	// // debug only
+	// for (i=0; i<sizeof(sendstr)/sizeof(unsigned char); ++i)
+	// 	ss << std::hex << (int)sendstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "send command " << _buf << sendLog;
+
+	// send command
+	sconn->flushPortIO();
+	if (sconn->writePort((const char*)(&sendstr),
+						 sizeof(sendstr)/sizeof(unsigned char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) <<
+			"IsGotoDone: cannot send command"
+								  << sendLog;
+		return -1;
+	}
+
+	// read acknowledgement
+	if (sconn->readPort((char*)acknstr,
+						sizeof(acknstr)/sizeof(unsigned char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) <<
+			"IsGotoDone: cannot read acknowledgement"
+								  << sendLog;
+		return -1;
+	}
+	
+	// // debug only
+	// ss.str(std::string());
+	// for (i=0; i<sizeof(acknstr)/sizeof(unsigned char); ++i)
+	// 	ss << std::hex << (int)acknstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "received acknowledgement "
+	//                           << _buf << sendLog;
+
+	// switch RTS bit to receive results
+	sconn->switchRTS();
+
+	// read reply
+	if (sconn->readPort((char*)returnstr,
+						sizeof(returnstr)/sizeof(unsigned char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) <<
+			"IsGotoDone: cannot read return"
+								  << sendLog;
+		sconn->switchRTS();
+		return -1;
+	}
+
+	// switch RTS bit to enable requests again
+	sconn->switchRTS();
+	
+	// check checksum
+	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(unsigned char)-1); i++)
+		chksum += (unsigned int)returnstr[i];
+	chksum = -chksum & 0xff;
+
+	// // debug only
+	// ss.str(std::string());
+	// for (i=0; i<sizeof(returnstr)/sizeof(unsigned char); ++i)
+	// 	ss << std::hex << (int)returnstr[i] << " ";
+	// _buf = ss.str();
+	// logStream (MESSAGE_DEBUG) << "received result "  << _buf << sendLog;
 	
 	if ((int)(unsigned char)returnstr[6] != chksum)
 	{
@@ -561,16 +763,21 @@ int PWIIRF90::GotoPos2(long targetTicks)
 		logStream (MESSAGE_ERROR) << "result checksum corrupt" << sendLog;
 		return -1;
 	}
-	
-	
-	return 0;
+
+	if (returnstr[5] == 0)
+		return 0; // still running
+	else if (returnstr[5] == 255)
+		return 1; // done
+	else
+	{
+		logStream (MESSAGE_ERROR) <<
+			"IsGotoDone: unclear if goto has finished "  << sendLog;		
+		return -1;
+	}
 }
 
 
-
-
 // send focus to given position
-//
 int PWIIRF90::setTo (double num)
 {
 	target->setValueDouble(num);
@@ -586,12 +793,9 @@ int PWIIRF90::isFocusing ()
 	if (getPos() < 0)
 		return -1;
 
-	//logStream (MESSAGE_ERROR) << "focstate " << state << sendLog;
-
     // target and position in microns, convert to ticks
 	double targetTicks = target->getValueDouble() * TICKS_PER_MICRON;
 	double currentPosTicks = position->getValueDouble() * TICKS_PER_MICRON;
-	double abspos_diff = fabs(targetTicks - currentPosTicks);
 
 	// define focus direction	
 	int focdir = 0;  
@@ -600,17 +804,29 @@ int PWIIRF90::isFocusing ()
 	else
 		focdir = -1;
 
-	logStream (MESSAGE_ERROR) << "abspos_diff " << abspos_diff << sendLog;
-	
-	// focuser arrived within 1 micron at target position; focusing finished
-	if ((state == GOTOPOS2) && (abspos_diff <= 5))
+	// GotoPos2 is done
+	if (state == GOTOPOS2)
 	{
-		logStream (MESSAGE_ERROR) << "arrived at target position" << sendLog;
-		
-		if (state != IDLE)
-			MoveFocuser(0);
-		
-		return -2;
+		int isgotopos2done = IsGotoDone();
+
+		if (isgotopos2done == -1)
+		{
+			logStream (MESSAGE_ERROR) << "IsFocusing: gotopos2 failed"
+									  << sendLog;
+			state = IDLE;
+			FocusState->setValueFloat(state);
+			sendValueAll(FocusState);
+			return -1;
+		}
+		else if (isgotopos2done == 1)
+		{
+			logStream (MESSAGE_ERROR) << "arrived at target position" <<
+				sendLog;
+			state = IDLE;
+			FocusState->setValueFloat(state);
+			sendValueAll(FocusState);
+			return -2;
+		}
 	}
 
 	// focuser not at target; commence focusing
@@ -623,18 +839,14 @@ int PWIIRF90::isFocusing ()
 	double remainingTicksBeforeStop = focdir * (targetBeforeGoto2 -
 												currentPosTicks);
 
-	//logStream (MESSAGE_ERROR) << "ticks before goto2 " << remainingTicksBeforeStop << sendLog;
-	
 	// move towards the target position
 	if ((remainingTicksBeforeStop > 0) && (state == IDLE))
 	{
-		logStream (MESSAGE_ERROR) << "moving in large steps; dir " << focdir << sendLog;
 		MoveFocuser(focdir);
 	}
-	else if ((remainingTicksBeforeStop <= 0) && (state != IDLE))
+	else if ((remainingTicksBeforeStop <= 0) && (state != GOTOPOS2))
 	{
 		// now we're close enough to use gotopos2
-		logStream (MESSAGE_ERROR) << "using gotopos2" << sendLog;
 		GotoPos2(targetTicks);
 	}
 
@@ -651,22 +863,25 @@ int PWIIRF90::getTemp ()
 	if (GetTemperature(&temp, 0) < 0)
 	{
 		logStream (MESSAGE_ERROR) <<
-			"could not read primary mirror temperature" <<  sendLog;
+			"getTemp: could not read primary mirror temperature"
+								  <<  sendLog;
 		return -1;
 	}
 	TempM1->setValueFloat(temp);
 	temperature->setValueFloat(temp);
+	sendValueAll(TempM1);
+	sendValueAll(temperature);	
     // FOC_TEMP is Primary Mirror Temperature ... 
 
 	// ambient temperature
 	if (GetTemperature(&temp, 1) < 0)
 	{
 		logStream (MESSAGE_ERROR) <<
-			"could not read ambient temperature" <<  sendLog;
+			"getTemp: could not read ambient temperature" <<  sendLog;
 		return -1;
 	}
 	TempAmbient->setValueFloat(temp);
-
+	sendValueAll(TempAmbient);
 	return 0;
 }
 
@@ -674,8 +889,6 @@ int PWIIRF90::info ()
 {
 	getPos();
 	getTemp();
-
-	FocusState->setValueFloat(state);
 	
 	return Focusd::info();
 }
@@ -691,26 +904,33 @@ int PWIIRF90::getPos ()
 						 0x00, 0x00, 0x00, 0x00 };
 	
 	// debug only
-	// for (i=0; i<sizeof(sendstr)/sizeof(char); ++i)
+	// for (i=0; i<sizeof(sendstr)/sizeof(unsigned char); ++i)
 	// 	ss << std::hex << (int)sendstr[i] << " ";
 	// _buf = ss.str();
 	// logStream (MESSAGE_DEBUG) << "send command "  << _buf << sendLog;
 
 	// send command
 	sconn->flushPortIO();
-	sconn->writePort((const char*)(&sendstr), sizeof(sendstr)/sizeof(char));
+	if (sconn->writePort((const char*)(&sendstr),
+						 sizeof(sendstr)/sizeof(unsigned char)) == -1)
+	{
+		logStream (MESSAGE_ERROR) << "getPos: cannot send command"
+								  << sendLog;
+		return -1;
+	}
 
 	// read acknowledgement
-	if (sconn->readPort(returnstr, sizeof(sendstr)/sizeof(char)) == -1)
+	if (sconn->readPort(returnstr,
+						sizeof(sendstr)/sizeof(unsigned char)) == -1)
 	{
-		logStream (MESSAGE_ERROR) << "could not read from serial connection"
+		logStream (MESSAGE_ERROR) << "getPos: cannot read acknowledgement"
 								  << sendLog;
 		return -1;
 	}
 
 	// debug only
 	// ss.str(std::string());
-	// for (i=0; i<sizeof(returnstr)/sizeof(char); ++i)
+	// for (i=0; i<sizeof(returnstr)/sizeof(unsigned char); ++i)
 	// 	ss << std::hex << (int)returnstr[i] << " ";
 	// _buf = ss.str();
 	// logStream (MESSAGE_DEBUG) << "received acknowledgement "
@@ -720,20 +940,23 @@ int PWIIRF90::getPos ()
 	sconn->switchRTS();
 
 	// read reply
-	if (sconn->readPort(returnstr, sizeof(returnstr)/sizeof(char)) == -1)
+	if (sconn->readPort(returnstr,
+						sizeof(returnstr)/sizeof(unsigned char)) == -1)
 	{
+		logStream (MESSAGE_ERROR) << "getPos: cannot read return"
+								  << sendLog;
 		sconn->switchRTS();
 		return -1;
 	}
 
 	// check checksum
-	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(char)-1); i++)
+	for (i=1, chksum=0; i<(sizeof(returnstr)/sizeof(unsigned char)-1); i++)
 		chksum += (unsigned int)returnstr[i];
 	chksum = -chksum & 0xff;
 
 	// // debug only
 	// ss.str(std::string());
-	// for (i=0; i<sizeof(returnstr)/sizeof(char); ++i)
+	// for (i=0; i<sizeof(returnstr)/sizeof(unsigned char); ++i)
 	// 	ss << std::hex << (int)returnstr[i] << " ";
 	// _buf = ss.str();
 	// logStream (MESSAGE_DEBUG) << "received result "  << _buf << sendLog;
@@ -753,9 +976,6 @@ int PWIIRF90::getPos ()
   	int b2 = (unsigned char) returnstr[7];
   	float focus = (256*256*b0 + 256*b1 + b2)/TICKS_PER_MICRON;
 
-	// logStream (MESSAGE_DEBUG) << "resulting focus position " << focus <<
-	//  	sendLog;
-	
 	position->setValueInteger(focus);
 	sendValueAll(position);
 	return 0;
@@ -777,6 +997,12 @@ int PWIIRF90::init ()
 	sconn->flushPortIO();
 
 	setIdleInfoInterval(10);
+
+	// get temperature and position status
+	info();
+
+	// get fan status
+	getFan();
 	
 	/* communications protocol:
 	   ========================
@@ -838,7 +1064,7 @@ int PWIIRF90::init ()
 
 	   )
 	*/
-	
+
 	return 0;	
 }
 
