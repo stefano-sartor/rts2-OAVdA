@@ -13,4 +13,5 @@ SUBDIRS = \
 	rts2tel \
 	rts2lx200 \
 	ucac5 \
-	gtp
+	gtp \
+	oavda

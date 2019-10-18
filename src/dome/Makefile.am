@@ -1,7 +1,8 @@
 bin_PROGRAMS = rts2-dome-bart rts2-dome-apm rts2-dome-fram \
 	rts2-cupola-mark rts2-cupola-dummy rts2-dome-bootes1a \
 	rts2-dome-bootes1b rts2-dome-zelio rts2-dome-opentpl \
-	rts2-cupola-maxdomeii rts2-cupola-saao rts2-cupola-tcsng
+	rts2-cupola-maxdomeii rts2-cupola-saao rts2-cupola-tcsng \
+	rts2-cupola-oavda
 
 SUBDIRS = zelio
 
@@ -83,3 +84,7 @@ rts2_dome_ieec_CPPFLAGS = @INC_COMEDI@ -I../../include
 else
 EXTRA_DIST += bootes2.cpp ieec.cpp
 endif
+
+rts2_cupola_oavda_SOURCES = oavda.cpp
+rts2_cupola_oavda_LDFLAGS =  -L../../lib/oavda -lrts2oavda ${LDADD}
+rts2_cupola_oavda_CPPFLAGS = -I../../include

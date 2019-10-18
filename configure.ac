@@ -1030,6 +1030,7 @@ AC_OUTPUT([Makefile
 	   lib/sep/Makefile
 	   lib/ucac5/Makefile
 	   lib/gtp/Makefile
+	   lib/oavda/Makefile
 	   python/Makefile
 	   python/rts2/Makefile
 	   python/rts2/db/Makefile

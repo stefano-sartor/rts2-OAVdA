@@ -121,3 +121,5 @@ scripts/rts2-stop
 conf/logrotate/logrotate-rts2.conf
 conf/rts2.service
 conf/rts2@.service
+.devcontainer/
+.vscode/
