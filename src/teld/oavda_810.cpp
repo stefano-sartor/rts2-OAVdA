@@ -395,8 +395,8 @@ int AxisDriver::move(double speed, double target)
 
 	_move_rw.at("Speed_init_microSec") = us_per_step_current;
 	_move_rw.at("Speed_final_microSec") = us_per_step_final;
-	_move_rw.at("Steps_accel") = steps_acc;
-	_move_rw.at("Steps_decel") = steps_decel;
+	_move_rw.at("Steps_accel") = 500;//steps_acc;
+	_move_rw.at("Steps_decel") = 500;//steps_decel;
 	_move_rw.at("Target_Position_Motor") = target;
 	_goto_coils_rw.at("GOTO_Remote") = 1;
 
@@ -407,55 +407,8 @@ int AxisDriver::move(double speed, double target)
 
 	std::cout << _move_rw; //DBG
 
-	int dist_const_speed = abs(target - curr_pos) - steps_acc - steps_decel;
-
-	double t_const = dist_const_speed / speed;
-	double t_acc = abs(time_from_acc(speed, curr_speed, _acc));
-	double t_decc = abs(time_from_acc(speed, 0, _acc));
-
-	std::cout << "curr " << curr_pos << " target " << target << std::endl;
-	std::cout << t_acc << " " << t_const << " " << t_decc << std::endl;
-	double eta = dist_const_speed / speed + abs(time_from_acc(speed, curr_speed, _acc)) + abs(time_from_acc(speed, 0, _acc));
-	eta *= 1000;
-	return eta;
+	return abs(target - curr_pos) * speed * 1000;
 }
-/*
-int AxisDriver::stop()
-{
-	if (read_input_registers(_status_regs_r) != _status_regs_r.len)
-		return -1;
-
-	int32_t us_per_step_current = _status_regs_r.at("Speed_microSec");
-	if (us_per_step_current == 0)
-		return 0; //already stopped
-
-	int32_t pos0 = _status_regs_r.at("Position_Motor");
-	std::this_thread::sleep_for(std::chrono::milliseconds(400));
-	if (read_input_registers(_status_regs_r) != _status_regs_r.len)
-		return -1;
-	int32_t pos1 = _status_regs_r.at("Position_Motor");
-
-	int32_t delta = pos1 - pos0;
-
-	double curr_speed = speed_usPs2stepsPs(us_per_step_current);
-	double steps_decel = curr_speed * _slope;
-
-	std::cout << pos0 << " " << pos1 << std::endl ;
-	_move_rw.at("Speed_init_microSec") = us_per_step_current;
-	_move_rw.at("Speed_final_microSec") = us_per_step_current;
-	_move_rw.at("Steps_accel") = 1;
-	_move_rw.at("Steps_decel") = steps_decel;
-	_move_rw.at("Target_Position_Motor") = delta > 0 ? pos1 + (steps_decel+steps_decel*50) : pos1 - (steps_decel+steps_decel*50);
-	_goto_coils_rw.at("GOTO_Remote") = 1;
-	if (write_registers(_move_rw) != _move_rw.len)
-		return -1;
-	if (write_bit("GOTO_Remote", _goto_coils_rw) != 1)
-		return -1;
-
-	std::cout << _move_rw; //DBG
-	return 0;
-}
-*/
 
 int AxisDriver::stop()
 {
