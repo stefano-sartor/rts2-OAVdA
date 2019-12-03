@@ -4,6 +4,7 @@
 #include <mutex>
 #include <string>
 #include <map>
+#include <ostream>
 
 namespace oavda
 {
@@ -19,6 +20,12 @@ public:
         int len;
 
         T& at(const std::string &key) { return value_map.at(key).second; }
+        friend std::ostream& operator<< (std::ostream& stream, const struct bulk_map_t& b) {
+            for(const auto& i : b.value_map){
+                stream << i.first << ": " << int(i.second.second) << std::endl;
+            }
+            return stream;
+        }
     };
 
     typedef bulk_map_t<uint8_t> bulk_coils;

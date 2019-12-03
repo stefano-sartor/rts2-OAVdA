@@ -164,11 +164,14 @@ protected:
         return Cupola::off();
     }
 
+    virtual int setValue(rts2core::Value *old_value, rts2core::Value *new_value); /*TODO*/
+
 private:
     Modbus _m;
     Modbus::bulk_coils _r_coils_status;
     Modbus::bulk_coils _rw_coils_move;
     Modbus::bulk_coils _rw_coils_encoder;
+    Modbus::bulk_coils _rw_coils_init;
     Modbus::bulk_registers _r_regs;
 
     rts2core::ValueBool *_status_park;
@@ -204,10 +207,11 @@ inline double steps2az(const int32_t &steps)
 }
 CupolaOavda::CupolaOavda(int argc, char **argv, bool inhibit_auto_close)
     : Cupola(argc, argv, inhibit_auto_close),
-      _r_coils_status(cupola_coils_r),
-      _rw_coils_move(cupola_coils_move_rw),
-      _rw_coils_encoder(cupola_coils_encoder_rw),
-      _r_regs(cupola_registers_r),
+      _r_coils_status(cupola_status_coil_r),
+      _rw_coils_move(cupola_move_coil_rw),
+      _rw_coils_encoder(cupola_reset_coil_rw),
+      _rw_coils_init(cupola_init_coil_rw),
+      _r_regs(cupola_status_reg_r),
       _crio_ip(""),
       _crio_port(502)
 {
@@ -436,6 +440,77 @@ int CupolaOavda::ready()
 {
     std::cout << "CALL: ready()" << std::endl;
     return 0;
+}
+
+/**
+ * Set value. This is the function that get called when user want to change some value, either interactively through
+ * rts2-mon, XML-RPC or from the script. You can overwrite this function in descendants to allow additional variables
+ * beiing overwritten. If variable has flag RTS2_VALUE_WRITABLE, default implemetation returns sucess. If setting variable
+ * involves some special commands being send to the device, you most probably want to overwrite setValue, and provides
+ * set action for your values in it.
+ *
+ * Suppose you have variables var1 and var2, which you would like to be settable by user. When user set var1, system will just change
+ * value and pick it up next time it will use it. If user set integer value var2, method setVar2 should be called to communicate
+ * the change to the underliing hardware. Then your setValueMethod should looks like:
+ *
+ * @code
+ * class MyClass:public MyParent
+ * {
+ *   ....
+ *   protected:
+ *       virtual int setValue (Value * old_value, Value *new_value)
+ *       {
+ *             if (old_value == var1)
+ *                   return 0;
+ *             if (old_value == var2)
+ *                   return setVar2 (new_value->getValueInteger ()) == 0 ? 0 : -2;
+ *             return MyParent::setValue (old_value, new_value);
+     *       }
+ *   ...
+ * };
+ *
+ * @endcode
+ *
+ * @param  old_value	Old value (pointer), can be directly
+ *        accesed with the pointer stored in object.
+ * @param new_value	New value.
+ *
+ * @return 1 when value can be set, but it will take longer
+ * time to perform, 0 when value can be se immediately, -1 when
+ * value set was queued and -2 on an error.
+ */
+int CupolaOavda::setValue(rts2core::Value *old_value, rts2core::Value *new_value){
+
+    if(old_value == _move_CCW){
+        /*TODO*/
+        return 0;
+    }
+
+    if(old_value == _move_CW){
+        /*TODO*/
+        return 0;
+    }
+
+    if(old_value == _move_stop){
+        /*TODO*/
+        return 0;
+    }
+
+    if(old_value == _status_reset_Encoder){
+        /*TODO*/
+        return 0;
+    }
+    if(old_value == _reset_encoder){
+        /*TODO*/
+        return 0;
+    }
+
+    if(old_value == _stop_reset_encoder){
+        /*TODO*/
+        return 0;
+    }
+
+    return Cupola::setValue(old_value,new_value);
 }
 
 //#define OAVDA_TEST 1
