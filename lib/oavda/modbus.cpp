@@ -1,5 +1,6 @@
 #include "oavda/modbus.h"
 #include <boost/endian/conversion.hpp>
+#include <iostream>
 
 namespace oavda
 {
@@ -20,14 +21,26 @@ Modbus::~Modbus()
 
 int Modbus::init(const std::string &ip_addr, uint16_t port)
 {
+    if (_mb) // may be a reinit
+    {
+        modbus_close(_mb);
+        modbus_free(_mb);
+    }
     _mb = modbus_new_tcp(ip_addr.c_str(), port);
     if (!_mb)
     {
         return -1;
     }
-    if(modbus_connect(_mb)){
+    if (modbus_connect(_mb))
+    {
         return -1;
     }
+    /*
+    timeval t;
+    t.tv_sec = 1;
+    t.tv_usec = 0;
+    modbus_set_response_timeout(_mb, &t);
+    */
     return 0;
 }
 
