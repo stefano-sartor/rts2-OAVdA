@@ -1,5 +1,5 @@
 # Process this file with autoconf to produce a configure script.C
-AC_INIT(rts2, 0.9.5, petr@rts2.org)
+AC_INIT([rts2],[0.9.5],[petr@rts2.org])
 
 AC_CANONICAL_BUILD
 AC_CANONICAL_TARGET
@@ -8,7 +8,7 @@ AM_INIT_AUTOMAKE([gnu dist-bzip2])
 
 LT_INIT()
 
-AC_PREREQ(2.50)
+AC_PREREQ([2.69])
 
 AC_CONFIG_MACRO_DIR([m4])
 
@@ -18,7 +18,7 @@ AM_MAINTAINER_MODE
 AM_PROG_CC_C_O
 AC_PROG_CXX
 AX_CXX_COMPILE_STDCXX_11
-AC_PROG_LIBTOOL
+LT_INIT
 AC_PROG_MAKE_SET
 
 AM_PATH_PYTHON
@@ -60,7 +60,7 @@ AS_IF([test "x$HIREDIS_LIBS" != x], [
 ])
 
 # check for lang
-AC_LANG_CPLUSPLUS
+AC_LANG([C++])
 
 CFLAGS="-Wall -Wshadow -g"
 AC_SUBST(CFLAGS)
@@ -82,7 +82,18 @@ AC_FUNC_FORK
 AC_PROG_GCC_TRADITIONAL
 AC_FUNC_MALLOC
 AC_FUNC_MKTIME
-AC_TYPE_SIGNAL
+AC_DIAGNOSE([obsolete],[your code may safely assume C89 semantics that RETSIGTYPE is void.
+Remove this warning and the `AC_CACHE_CHECK' when you adjust the code.])dnl
+AC_CACHE_CHECK([return type of signal handlers],[ac_cv_type_signal],[AC_COMPILE_IFELSE(
+[AC_LANG_PROGRAM([#include <sys/types.h>
+#include <signal.h>
+],
+		 [return *(signal (0, 0)) (0) == 1;])],
+		   [ac_cv_type_signal=int],
+		   [ac_cv_type_signal=void])])
+AC_DEFINE_UNQUOTED([RETSIGTYPE],[$ac_cv_type_signal],[Define as the return type of signal handlers
+		    (`int' or `void').])
+
 AC_FUNC_STRTOD
 AC_CHECK_FUNCS([dup2 floor gethostbyname gettimeofday inet_ntoa memmove memset poll socket strchr strdup strerror strtol mkdir sqrt strcasecmp strncasecmp pow getaddrinfo getopt_long flock strtod isinf scandir alphasort isblank strcasestr trunc getline inotify_init inotify_add_watch inotify_init1 nftw round strtof isatty])
 
@@ -985,7 +996,7 @@ AM_CONDITIONAL(SUNCYGMAC, test x${target_os} = xcygwin -o x${target_os} = xsolar
 AM_CONDITIONAL(ARMCPU, test x${target_cpu/arm} != x${target_cpu} -o x${target_cpu/aarch64} != x${target_cpu})
 AM_CONDITIONAL(ARM64CPU, test x${target_cpu} != xaarch64)
 
-AC_OUTPUT([Makefile
+AC_CONFIG_FILES([Makefile
 	   rts2-init
 	   rts2.initd
 	   man/Makefile
@@ -1074,6 +1085,7 @@ AC_OUTPUT([Makefile
 	   src/logger/Makefile
 	   src/httpd/Makefile
 	   src/wsd/Makefile
+	   src/teensyd/Makefile
 	   src/scheduler/Makefile
 	   src/bb/Makefile
 	   src/pluto/Makefile
@@ -1085,8 +1097,9 @@ AC_OUTPUT([Makefile
 	   checks/Makefile
 	   checks/data/Makefile
 	   scripts/rts2saf/Makefile
-	   scripts/rts2saf/rts2saf/Makefile]
-)
+	   scripts/rts2saf/rts2saf/Makefile
+])
+AC_OUTPUT
 
 echo "
 ****************************************************************************

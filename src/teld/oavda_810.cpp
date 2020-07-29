@@ -1,5 +1,4 @@
-#include "oavda/modbus.h"
-#include "oavda/modbus_address.h"
+#include "oavda/driver_serial.h"
 #include "teld.h"
 #include "configuration.h"
 #include "libnova_cpp.h"
@@ -17,7 +16,7 @@
 #define RA_TICKS 4160342
 #define RA_ZERO_STEPS (RA_TICKS / 2)
 #define RA_ACC AXIS_ACC
-#define TRACK_SPEED (double(RA_TICKS) / 86164.1)
+#define TRACK_SPEED (double(RA_TICKS) / 86400)
 #define RA_REPOINT_SPEED 10000
 
 #define DEC_MIN_STEPS 0

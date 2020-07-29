@@ -29,4 +29,5 @@ SUBDIRS = \
 	catd \
 	redis \
 	thrift \
-	ucac5
+	ucac5 \
+	teensyd

@@ -31,7 +31,8 @@ RUN apt-get install -y\
    libwcstools-dev\
    liberfa-dev\
    libmodbus-dev\
-   libboost-dev
+   libboost-dev\
+   libmsgpack-dev
 
 RUN useradd -M  -s /bin/bash user
 RUN export LIB_ECPG="-lecpg"
