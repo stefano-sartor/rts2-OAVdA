@@ -15,7 +15,7 @@
 #define ERROR_QUEUE_FULL = 0x10
 #define ERROR_QUEUE_BAD_REQ = 0x20
 
-#define ERROR_COMM 0x0F
+#define ERROR_COMM 0xFF
 
 #include <inttypes.h>
 #include <deque>
@@ -66,36 +66,39 @@ namespace oavda
             RA = MOTOR_RA,
             DEC = MOTOR_DEC
         };
-        AxisStepper(axis ax) : AxisAdv(uint8_t(ax)), _acc(1000) {}
+        AxisStepper(axis ax) : AxisAdv(uint8_t(ax)), _acc(1000), _track(false) {}
         error_t stop() { return AxisAdv::stop(); }
         float get_speed(error_t &err){err = hk(); return _speed_sps;}
         int32_t get_position(error_t &err);
         error_t set_position(int32_t pos);
-        float go_to(int32_t pos,float max_speed,error_t &err);
-        error_t jerk(int32_t steps);
+        float go_to(int32_t pos,bool track,error_t &err);
+        float jerk(int32_t steps,error_t &err);
 
     private:
         typedef std::deque<uint32_t> speed_t;
         typedef std::deque<std::pair<int32_t, uint32_t>> command_t;
+        typedef struct {
+            float curr_speed;
+            int32_t curr_position;
+            command_t buffer;
+        } move_t;
 
         error_t hk();
         void compute_acc(float min_speed, float& max_speed, speed_t &array,size_t max_steps);
-        void enque_stop(int32_t& position);
-        error_t bulk(bool start_now);
+        void append_stop(move_t& m);
+        void append_goto(move_t& m,int32_t pos,float max_speed,float final_speed);
+        error_t bulk(move_t& m, bool start_now);
 
         template<typename IT>
         void compress(IT b, IT e, command_t& acc, int sgn=1);
         float _acc;      // steps * s^-2
-        int32_t _target; // usefull to restore tracking speed after correction
+        bool _track; // usefull to restore tracking speed after correction
 
         int8_t _dir;
         uint32_t _speed_us;
         int32_t _position;
         uint8_t _buff_free;
         float _speed_sps;
-
-        command_t _command_array;
-        float _time;
     };
 
     class AxisPWM : private AxisBase

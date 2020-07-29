@@ -18,6 +18,7 @@
 #define CMD_WRITE_POSITION 0x60
 
 #define STEPS_RA 4160342
+#define TRACK_END STEPS_RA
 #define TICK_US (71 / 2)
 #define US 1000000
 #define TICK_S (US / TICK_US)
@@ -260,26 +261,30 @@ namespace oavda
         return float(ticks * TICK_US) / float(US);
     }
 
-    inline float commands2s(const std::deque<std::pair<int32_t, uint32_t>> &c){
+    inline float commands2s(const std::deque<std::pair<int32_t, uint32_t>> &c)
+    {
         float s = 0;
-        for (const auto& i : c){
+        for (const auto &i : c)
+        {
             s += ticks2s(i.second) * abs(i.first);
         }
         return s;
     }
 
-    error_t AxisStepper::bulk(bool start_now)
+    error_t AxisStepper::bulk(move_t &m, bool start_now)
     {
         error_t err = 0;
-        _time = commands2s(_command_array);
 
-        if(start_now && !_command_array.empty()){
-            err = go_rel(_command_array.front().first,_command_array.front().second);
-            _command_array.pop_front();
+        if (start_now && !m.buffer.empty())
+        {
+            err = go_rel(m.buffer.front().first, m.buffer.front().second);
+            m.buffer.pop_front();
         }
-        for(auto& c : _command_array){
-            if(err) return err;
-            err = append(c.first,c.second);
+        for (auto &c : m.buffer)
+        {
+            if (err)
+                return err;
+            err = append(c.first, c.second);
         }
         return err;
     }
@@ -340,47 +345,82 @@ namespace oavda
         }
     }
 
-    void AxisStepper::enque_stop(int32_t &position)
+    void AxisStepper::append_stop(move_t &m)
     {
-        if (abs(_speed_sps) <= STOP_SPEED)
+        if (abs(m.curr_speed) <= STOP_SPEED)
         { // safe speed to stop
-            _speed_sps = 0;
+            m.curr_speed = 0;
             return;
         }
-        int sgn = _speed_sps < 0 ? -1 : 1;
+        int sgn = m.curr_speed < 0 ? -1 : 1;
         speed_t a;
-        float speed = abs(_speed_sps);
+        float speed = abs(m.curr_speed);
         compute_acc(STOP_SPEED, speed, a, LIMIT_STEPS);
-        position += a.size() * sgn;
-        compress(a.rbegin(), a.rend(), _command_array, sgn);
+        m.curr_position += a.size() * sgn;
+        compress(a.rbegin(), a.rend(), m.buffer, sgn);
+        m.curr_speed = 0;
     }
 
-    float AxisStepper::go_to(int32_t pos, float max_speed, error_t &err)
+    float AxisStepper::go_to(int32_t pos, bool track, error_t &err)
     {
         err = hk();
         if (err)
             return 0;
 
-        _command_array.clear(); //start fresh
-        _time = 0;              //start fresh
+        move_t m = {.curr_speed = _speed_sps, .curr_position = _position};
 
-        int32_t steps = pos - _position;
-        if ((_speed_sps < 0 && steps > 0) ||                   // do we need to reverse movement?
-            (_speed_sps > 0 && steps < 0) ||                   // as above
+        append_goto(m, pos, MAX_SPEED, STOP_SPEED);
+        float time = commands2s(m.buffer); // we return just the repoint time
+
+        if (track)
+            append_goto(m, TRACK_END, TRACK_SPEED, STOP_SPEED);
+
+        err = bulk(m, true);
+        if (err == 0 && track)
+            _track = true;
+        else
+            _track = false;
+
+        return time;
+    }
+
+    float AxisStepper::jerk(int32_t steps, error_t &err)
+    {
+        err = hk();
+        if (err)
+            return 0;
+
+        move_t m = {.curr_speed = _speed_sps, .curr_position = _position};
+
+        append_goto(m, m.curr_position+steps, MAX_SPEED, STOP_SPEED);
+        float time = commands2s(m.buffer); // we return just the repoint time
+
+        if (_track)
+            append_goto(m, TRACK_END, TRACK_SPEED, STOP_SPEED);
+
+        err = bulk(m, true);
+        return time;
+    }
+
+    void AxisStepper::append_goto(move_t &m, int32_t pos, float max_speed, float final_speed)
+    {
+        int32_t steps = pos - m.curr_position;
+        if ((m.curr_speed < 0 && steps > 0) ||                 // do we need to reverse movement?
+            (m.curr_speed > 0 && steps < 0) ||                 // as above
             abs(steps) < (max_speed * max_speed) / (2 * _acc)) // is the target too close to brake at current speed?
         {                                                      // we need to reverse the movement
-            enque_stop(_position);
-            steps = pos - _position; // abs(steps) should increase and not change sign since we stop in the same movement direction
+            append_stop(m);
+            steps = pos - m.curr_position; // abs(steps) should increase and not change sign since we stop in the same movement direction
         }
 
         speed_t speed_acc, speed_decel;
         command_t commands;
-        int sgn = _speed_sps < 0 ? -1 : 1;
+        int sgn = m.curr_speed < 0 ? -1 : 1;
 
-        float final_speed = max_speed;
-        compute_acc(abs(_speed_sps), final_speed, speed_acc, abs(steps) / 2);
+        float reached_speed = abs(max_speed);
+        compute_acc(abs(m.curr_speed), reached_speed, speed_acc, abs(steps) / 2);
         int32_t remain_steps = abs(steps) - speed_acc.size();
-        compute_acc(STOP_SPEED, final_speed, speed_decel, LIMIT_STEPS);
+        compute_acc(final_speed, reached_speed, speed_decel, LIMIT_STEPS);
         remain_steps -= speed_decel.size();
         while (remain_steps < 0)
         { //not enough steps to stop -> erase half ecced steps form acc and half from decel
@@ -395,21 +435,20 @@ namespace oavda
                 remain_steps++;
             }
         }
-        compress(speed_acc.begin(), speed_acc.end(), _command_array, sgn); // append acceleration
-        if (remain_steps > 0)                                              // append constant speed
+        compress(speed_acc.begin(), speed_acc.end(), m.buffer, sgn); // append acceleration
+        if (remain_steps > 0)                                        // append constant speed
         {
             if (!speed_acc.empty())
-                _command_array.emplace_back(remain_steps * sgn, speed_acc.back());
+                m.buffer.emplace_back(remain_steps * sgn, speed_acc.back());
             else if (!speed_decel.empty())
-                _command_array.emplace_back(remain_steps * sgn, speed_decel.back());
+                m.buffer.emplace_back(remain_steps * sgn, speed_decel.back());
             else
-                _command_array.emplace_back(remain_steps * sgn, speed2ticks(max_speed));
+                m.buffer.emplace_back(remain_steps * sgn, speed2ticks(max_speed));
         }
-        compress(speed_decel.rbegin(), speed_decel.rend(), _command_array, sgn); // append deceleration
+        compress(speed_decel.rbegin(), speed_decel.rend(), m.buffer, sgn); // append deceleration
 
-        err = bulk(true);
-        _target = pos;
-        return _time;
+        m.curr_position = pos;
+        m.curr_speed = final_speed * sgn;
     }
 
 } // namespace oavda
