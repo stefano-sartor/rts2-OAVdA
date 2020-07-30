@@ -71,27 +71,28 @@ namespace oavda
         float get_speed(error_t &err){err = hk(); return _speed_sps;}
         int32_t get_position(error_t &err);
         error_t set_position(int32_t pos);
-        float go_to(int32_t pos,bool track,error_t &err);
-        float jerk(int32_t steps,error_t &err);
+        float go_to(int32_t pos, bool track, error_t &err);
+        float jerk(int32_t steps, error_t &err);
 
     private:
         typedef std::deque<uint32_t> speed_t;
         typedef std::deque<std::pair<int32_t, uint32_t>> command_t;
-        typedef struct {
+        typedef struct
+        {
             float curr_speed;
             int32_t curr_position;
             command_t buffer;
         } move_t;
 
         error_t hk();
-        void compute_acc(float min_speed, float& max_speed, speed_t &array,size_t max_steps);
-        void append_stop(move_t& m);
-        void append_goto(move_t& m,int32_t pos,float max_speed,float final_speed);
-        error_t bulk(move_t& m, bool start_now);
+        void compute_acc(float min_speed, float &max_speed, speed_t &array, size_t max_steps);
+        void append_stop(move_t &m);
+        void append_goto(move_t &m, int32_t pos, float max_speed, float final_speed);
+        error_t bulk(move_t &m, bool start_now);
 
-        template<typename IT>
-        void compress(IT b, IT e, command_t& acc, int sgn=1);
-        float _acc;      // steps * s^-2
+        template <typename IT>
+        void compress(IT b, IT e, command_t &acc, int sgn = 1);
+        float _acc;  // steps * s^-2
         bool _track; // usefull to restore tracking speed after correction
 
         int8_t _dir;
@@ -111,6 +112,21 @@ namespace oavda
         };
         AxisPWM(axis ax) : AxisBase(uint8_t(ax)) {}
         error_t stop() { return AxisBase::stop(); }
+        float get_speed(error_t &err){err = hk(); return _speed_pwm;}
+        int32_t get_position(error_t &err);
+        error_t set_position(int32_t pos);
+        float go_to(int32_t pos, error_t &err);
+        float jerk(int32_t steps, error_t &err);
+
+    private:
+        error_t hk();
+
+        int8_t _dir;
+        uint32_t _speed_raw;
+        int32_t _position;
+        uint8_t _buff_free;
+
+        float _speed_pwm;
     };
 } // namespace oavda
 #endif

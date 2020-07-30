@@ -243,6 +243,12 @@ namespace oavda
         return buff_free;
     }
 
+    /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *
+ *                               AxisStepper               
+ * 
+ *  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
     inline float tiks2speed(const uint32_t &speed_tiks)
     {
         if (speed_tiks == 0)
@@ -392,7 +398,7 @@ namespace oavda
 
         move_t m = {.curr_speed = _speed_sps, .curr_position = _position};
 
-        append_goto(m, m.curr_position+steps, MAX_SPEED, STOP_SPEED);
+        append_goto(m, m.curr_position + steps, MAX_SPEED, STOP_SPEED);
         float time = commands2s(m.buffer); // we return just the repoint time
 
         if (_track)
@@ -451,4 +457,63 @@ namespace oavda
         m.curr_speed = final_speed * sgn;
     }
 
+    /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * 
+ *
+ *                               AxisPWM                    
+ * 
+ *  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+
+    inline error_t AxisPWM::hk()
+    {
+        error_t err = read_hk(_dir, _speed_raw, _position, _buff_free);
+        if (err)
+            return err;
+
+        _speed_pwm = tiks2speed(_speed_raw) * _dir <= 0 ? -1 : 1;
+        return 0;
+    }
+
+    int32_t AxisPWM::get_position(error_t &err)
+    {
+        err = hk();
+        return _position;
+    }
+
+    error_t AxisPWM::set_position(int32_t pos)
+    {
+        error_t err = AxisBase::set_position(pos);
+        _position = pos;
+        return err;
+    }
+
+    float AxisPWM::go_to(int32_t pos, error_t &err)
+    {
+        err = hk();
+        if(err) return 0;
+
+        int32_t steps = pos - _position;
+        if ((_speed_pwm < 0 && steps > 0) ||  // do we need to reverse movement?
+            (_speed_pwm > 0 && steps < 0) )   // as above
+        {                                     // we need to reverse the movement
+            err = stop();
+            if(err) return 0;
+        }
+        err = go_abs(pos,1); // speed does not count in PID PWM
+        return steps; //FIXME: return meaningful value
+    }
+
+    float AxisPWM::jerk(int32_t steps, error_t &err)
+    {
+        err = hk();
+        if(err) return 0;
+
+        if ((_speed_pwm < 0 && steps > 0) ||  // do we need to reverse movement?
+            (_speed_pwm > 0 && steps < 0) )   // as above
+        {                                     // we need to reverse the movement
+            err = stop();
+            if(err) return 0;
+        }
+        err = go_rel(steps,1); // speed does not count in PID PWM
+        return steps; //FIXME: return meaningful value
+    }
 } // namespace oavda
