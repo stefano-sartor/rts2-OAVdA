@@ -32,6 +32,7 @@ RUN apt-get install -y\
    liberfa-dev\
    libmodbus-dev\
    libboost-dev\
+   libboost-system-dev\
    libmsgpack-dev
 
 RUN useradd -M  -s /bin/bash user

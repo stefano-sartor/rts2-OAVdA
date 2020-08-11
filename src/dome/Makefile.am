@@ -86,5 +86,5 @@ EXTRA_DIST += bootes2.cpp ieec.cpp
 endif
 
 rts2_cupola_oavda_SOURCES = oavda.cpp
-rts2_cupola_oavda_LDFLAGS =  -L../../lib/oavda -lrts2oavda ${LDADD}
+rts2_cupola_oavda_LDFLAGS =  -L../../lib/oavda -lrts2oavda  -lboost_system ${LDADD}
 rts2_cupola_oavda_CPPFLAGS = -I../../include
