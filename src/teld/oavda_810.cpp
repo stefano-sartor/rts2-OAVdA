@@ -18,14 +18,14 @@
 #define RA_MAX_STEPS RA_TICKS
 #define RA_ACC AXIS_ACC
 #define TRACK_SPEED (double(RA_TICKS) / 86400)
-#define RA_REPOINT_SPEED 10000
+#define RA_REPOINT_SPEED 30000/*10000*/
 
 #define DEC_MIN_STEPS 0
 #define DEC_TICKS 4292250
 #define DEC_ZERO_STEPS (DEC_TICKS / 2)
 #define DEC_MAX_STEPS DEC_TICKS
 #define DEC_ACC AXIS_ACC
-#define DEC_REPOINT_SPEED 5000
+#define DEC_REPOINT_SPEED 30000/*5000*/
 
 #define MOTOR_SMOOTH_FACTOR 150
 
@@ -550,10 +550,11 @@ namespace rts2teld
 			}
 		}
 		else
-		{				//FIXME ricalculate target!!!!!
+		{	
+						//FIXME ricalculate target!!!!!
 				/*
 /////////////////////////////////////////////////////////////////////////////////
-meglio ricalcolare il target per arrivare più precisi su repointing lunghi
+meglio ricalcolare il target per arrivare più precisi su repointing lunghi... o no?
 /////////////////////////////////////////////////////////////////////////////////
 				*/
 			if (abs(_motor_ra.target()  - pos_ra ) <  haCpd->getValueDouble() * moveTolerance->getValueDouble() &&
@@ -570,8 +571,8 @@ meglio ricalcolare il target per arrivare più precisi su repointing lunghi
 				if (err)
 					return -1;
 
-				double eta_ra = abs(_motor_ra.target() - pos_ra) * speed_ra;
-				double eta_dec = abs(_motor_dec.target() - pos_dec) * speed_dec;
+				double eta_ra = abs(_motor_ra.target() - pos_ra) * abs(speed_ra);
+				double eta_dec = abs(_motor_dec.target() - pos_dec) * abs(speed_dec);
 
 				// return min eta, excluding 0
 				eta_ra = eta_ra == 0 ? eta_dec : eta_ra;
