@@ -114,5 +114,5 @@ EXTRA_DIST += mdm.cpp bait.cpp
 endif
 
 rts2_teld_oavda_810_SOURCES = oavda_810.cpp
-rts2_teld_oavda_810_LDADD = -L../../lib/oavda -lrts2oavda  -lboost_system ${LDADD}
+rts2_teld_oavda_810_LDADD = -L../../lib/oavda -lrts2oavda -lpthread -lboost_system ${LDADD}
 rts2_teld_oavda_810_CPPFLAGS = -I../../include

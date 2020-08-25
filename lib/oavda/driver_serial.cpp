@@ -100,10 +100,10 @@ namespace oavda
         if (diff.count() > 1)
         {
             std::cout << "TIMEOUT PDD" << std::endl;
-            ec = boost::system::error_code(boost::system::errc::timed_out, boost::system::posix_category);
+            ec = boost::system::errc::make_error_code(boost::system::errc::timed_out);
         }
         else
-            ec = boost::system::error_code(boost::system::errc::bad_message, boost::system::posix_category);
+            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
 
         return res;
     }
