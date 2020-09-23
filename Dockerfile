@@ -6,7 +6,7 @@ RUN ln -fs  /usr/share/zoneinfo/Europe/Rome /etc/localtime
 RUN apt-get update && apt-get install -y tzdata
 RUN dpkg-reconfigure --frontend noninteractive tzdata
 
-RUN apt-get install -y\
+RUN apt-get update && apt-get install -y\
    git\
    postgresql\
    postgresql-server-dev-all\

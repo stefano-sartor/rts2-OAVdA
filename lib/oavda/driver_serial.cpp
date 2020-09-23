@@ -21,7 +21,7 @@
 #define US 1000000
 #define TICK_S (US / TICK_US)
 
-#define MAX_SPEED (US / 40)
+#define MAX_SPEED 10000
 //#define TRACK_SPEED (STEPS_RA / 86400)
 #define STOP_SPEED ((STEPS_RA / 86400)*0.5)
 
@@ -314,7 +314,7 @@ namespace oavda
     inline uint32_t speed2ticks(const float &speed)
     {
         uint32_t s = round(TICK_S / speed);
-        return s>0?s:1;
+        return s>1?s:2;
     }
 
     inline float ticks2s(uint32_t ticks)
@@ -494,7 +494,7 @@ namespace oavda
             steps = pos - m.curr_position; // abs(steps) should increase and not change sign since we stop in the same movement direction
         }
 
-        std::cout <<"steps to target: " << steps << std::endl;
+        std::cout <<"steps to target: " << steps << "  target: " << pos <<std::endl;
         speed_t speed_acc, speed_decel;
         int sgn = steps >0? 1 : -1;
 

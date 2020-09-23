@@ -1147,7 +1147,11 @@ bool HttpD::verifyDBUser (std::string username, std::string pass, rts2core::User
 #else
 bool HttpD::verifyDBUser (std::string username, std::string pass, rts2core::UserPermissions *userPermissions)
 {
-	return userLogins.verifyUser (username, pass, userPermissions);
+	///DBG
+	std::cout << "req usr " << username << " : " << pass << std::endl;
+	bool b = userLogins.verifyUser (username, pass, userPermissions);
+	std::cout << "permission: " << b << std::endl;
+	return true; //DBG VERY BAD
 }
 
 bool rts2xmlrpc::verifyUser (std::string username, std::string pass, rts2core::UserPermissions *userPermissions)

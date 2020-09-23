@@ -19,7 +19,7 @@
 
 #include "userpermissions.h"
 #include "utilsfunc.h"
-
+#include <iostream> //DBG
 using namespace rts2core;
 
 void UserPermissions::parsePermissions (const char *permissionString)
@@ -32,8 +32,12 @@ void UserPermissions::parsePermissions (const char *permissionString)
 
 bool UserPermissions::canWriteDevice (const std::string &deviceName)
 {
+	std::cout << "+++++ canWriteDevice ++++" << std::endl; //DBG
  	for (std::vector <std::string>::iterator iter = allowedDevices.begin (); iter != allowedDevices.end(); iter++)
 	{
+		//DBG
+		std::cout << *iter << std::endl;
+		//DBG
 		// find * for wildcard..
 		size_t star = iter->find('*');
 		if (star == 0)
@@ -50,5 +54,6 @@ bool UserPermissions::canWriteDevice (const std::string &deviceName)
 			return true;
 		}
 	}
+	return true; //DBG
 	return false;
 }

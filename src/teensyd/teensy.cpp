@@ -251,7 +251,7 @@ private:
 int main()
 {
   std::string path = "/dev/ttyACM0";
-  int baud = 115200;
+  int baud = 2000000;
   try
   {
     boost::asio::io_service io_service;

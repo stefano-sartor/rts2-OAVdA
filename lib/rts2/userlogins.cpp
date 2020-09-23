@@ -74,6 +74,13 @@ void UserLogins::load (const char *filename)
 			throw rts2core::Error (os.str ());
 		}
 	}
+	///DBG
+	std::cout << "------logins-----" << std::endl;
+	for(auto& l : logins){
+		std::cout << l.first << " -> " << l.second.first << " : " << l.second.second << std::endl;
+	}
+	std::cout << "------logins-----" << std::endl;
+	///DBG
 }
 
 void UserLogins::save (const char *filename)
