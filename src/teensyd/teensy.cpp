@@ -171,10 +171,6 @@ private:
       }
       if (ok)
       {
-        ///DBG   if (res.get().type == msgpack::type::ARRAY &&
-        ///DBG       res.get().via.array.size > 1)
-        ///DBG       std::cout << "read res  [" << int(res.get().via.array.ptr[0].type) << "] " << std::endl;
-
         boost::asio::async_write(_socket, boost::asio::buffer(_data,_off),
                                  boost::bind(&ConnectionTCP::handle_write, shared_from_this(),
                                              boost::asio::placeholders::error,

@@ -48,7 +48,7 @@ namespace oavda
     protected:
         template <typename T>
         msgpack::object_handle send(T &msg, boost::system::error_code &ec);
-        error_t read_hk(int8_t &dir, uint32_t &speed, int32_t &pos, uint8_t &buff_free);
+        error_t read_hk(int8_t &dir, uint32_t &speed, int32_t &pos, uint8_t& status, uint8_t &buff_free);
 
         uint8_t _motor;
     private:
@@ -114,6 +114,7 @@ namespace oavda
         int8_t _dir;
         uint32_t _speed_us;
         int32_t _position;
+        uint8_t _status;
         uint8_t _buff_free;
         float _speed_sps;
         float _track_speed;
@@ -147,6 +148,7 @@ namespace oavda
         int8_t _dir;
         uint32_t _speed_raw;
         int32_t _position;
+        uint8_t _status;
         uint8_t _buff_free;
 
         float _speed_pwm;

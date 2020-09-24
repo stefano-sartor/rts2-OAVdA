@@ -23,7 +23,7 @@
 
 #define MAX_SPEED 10000
 //#define TRACK_SPEED (STEPS_RA / 86400)
-#define STOP_SPEED ((STEPS_RA / 86400)*0.5)
+#define STOP_SPEED ((STEPS_RA / 86400) * 0.5)
 
 #define LIMIT_STEPS 1000000
 
@@ -108,7 +108,7 @@ namespace oavda
         return res;
     }
 
-    error_t decode_1(msgpack::object_handle& res, boost::system::error_code ec)
+    error_t decode_1(msgpack::object_handle &res, boost::system::error_code ec)
     {
         if (ec)
             return ERROR_COMM;
@@ -141,19 +141,20 @@ namespace oavda
         tcp::resolver resolver(_io_service);
         try
         {
-            _ep = boost::asio::ip::tcp::endpoint(resolver.resolve({ hostname, "" })->endpoint().address(), port);
+            _ep = boost::asio::ip::tcp::endpoint(resolver.resolve({hostname, ""})->endpoint().address(), port);
         }
         catch (const std::exception &ex)
         {
             std::cout << ex.what() << std::endl;
-            return -1;
+            return 55;
         }
 
         boost::system::error_code error = reconnect();
 
-        if (error) {
+        if (error)
+        {
             std::cout << error.message() << std::endl;
-            return -1;
+            return 77;
         }
         return 0;
     }
@@ -216,7 +217,7 @@ namespace oavda
         return decode_1(res, ec);
     }
 
-    error_t AxisBase::read_hk(int8_t &dir, uint32_t &speed, int32_t &pos, uint8_t &buff_free)
+    error_t AxisBase::read_hk(int8_t &dir, uint32_t &speed, int32_t &pos, uint8_t &status, uint8_t &buff_free)
     {
         auto msg = msgpack::type::tuple<uint8_t, uint8_t>(CMD_READ_DATA, _motor);
         boost::system::error_code ec;
@@ -228,21 +229,16 @@ namespace oavda
         if (res.get().type != msgpack::type::ARRAY)
             return ERROR_COMM;
 
-        if (res.get().via.array.size != 4)
+        if (res.get().via.array.size != 5)
             return ERROR_COMM;
 
         try
         {
-            ///DBG    std::cout << "type hk"
-            ///DBG              << " [" << int(res.get().via.array.ptr[0].type) << "] "
-            ///DBG              << " [" << int(res.get().via.array.ptr[1].type) << "] "
-            ///DBG              << " [" << int(res.get().via.array.ptr[2].type) << "] "
-            ///DBG              << " [" << int(res.get().via.array.ptr[3].type) << "] " << std::endl;
-
             dir = res.get().via.array.ptr[0].as<int8_t>();
             speed = res.get().via.array.ptr[1].as<uint32_t>();
             pos = res.get().via.array.ptr[2].as<int32_t>();
-            buff_free = res.get().via.array.ptr[3].as<uint8_t>();
+            status = res.get().via.array.ptr[3].as<uint8_t>();
+            buff_free = res.get().via.array.ptr[4].as<uint8_t>();
         }
         catch (const std::exception &ex)
         {
@@ -258,9 +254,10 @@ namespace oavda
         int8_t dir;
         uint32_t speed;
         int32_t pos;
+        uint8_t status;
         uint8_t buff_free;
 
-        err = read_hk(dir, speed, pos, buff_free);
+        err = read_hk(dir, speed, pos, status, buff_free);
         return dir;
     }
 
@@ -269,9 +266,10 @@ namespace oavda
         int8_t dir;
         uint32_t speed;
         int32_t pos;
+        uint8_t status;
         uint8_t buff_free;
 
-        err = read_hk(dir, speed, pos, buff_free);
+        err = read_hk(dir, speed, pos, status, buff_free);
         return speed;
     }
 
@@ -280,9 +278,10 @@ namespace oavda
         int8_t dir;
         uint32_t speed;
         int32_t pos;
+        uint8_t status;
         uint8_t buff_free;
 
-        err = read_hk(dir, speed, pos, buff_free);
+        err = read_hk(dir, speed, pos, status, buff_free);
         return pos;
     }
 
@@ -291,9 +290,10 @@ namespace oavda
         int8_t dir;
         uint32_t speed;
         int32_t pos;
+        uint8_t status;
         uint8_t buff_free;
 
-        err = read_hk(dir, speed, pos, buff_free);
+        err = read_hk(dir, speed, pos, status, buff_free);
         return buff_free;
     }
 
@@ -314,7 +314,7 @@ namespace oavda
     inline uint32_t speed2ticks(const float &speed)
     {
         uint32_t s = round(TICK_S / speed);
-        return s>1?s:2;
+        return s > 1 ? s : 2;
     }
 
     inline float ticks2s(uint32_t ticks)
@@ -336,7 +336,7 @@ namespace oavda
     {
         error_t err = 0;
 
-        std::cout << "++++++++++++++++++++++++++++++++++++++++++++++ " << int(_motor) <<std::endl;
+        std::cout << "++++++++++++++++++++++++++++++++++++++++++++++ " << int(_motor) << std::endl;
         if (start_now && !m.buffer.empty())
         {
             std::cout.width(10);
@@ -357,13 +357,13 @@ namespace oavda
             std::cout << c.second << std::endl;
             err = append(c.first, c.second);
         }
-        std::cout << "++++++++++++++++++++++++++++++++++++++++++++++ " << int(_motor) <<std::endl;
+        std::cout << "++++++++++++++++++++++++++++++++++++++++++++++ " << int(_motor) << std::endl;
         return err;
     }
 
     inline error_t AxisStepper::hk()
     {
-        error_t err = read_hk(_dir, _speed_us, _position, _buff_free);
+        error_t err = read_hk(_dir, _speed_us, _position,_status, _buff_free);
         if (err)
             return err;
 
@@ -387,27 +387,27 @@ namespace oavda
         return err;
     }
 
-    void AxisStepper::compute_acc(float i, float &f, std::deque<uint32_t> &a, size_t max_steps,const float& smooth_factor)
+    void AxisStepper::compute_acc(float i, float &f, std::deque<uint32_t> &a, size_t max_steps, const float &smooth_factor)
     {
         size_t stop_steps = a.size() + max_steps;
-        float v0 = i > STOP_SPEED? i : STOP_SPEED;
+        float v0 = i > STOP_SPEED ? i : STOP_SPEED;
         float v = v0;
         float t = ticks2s(speed2ticks(v0));
-        std::cout << "compute_acc " << v0 << " ["<<speed2ticks(v0) <<"]  "<< f << " ["<<speed2ticks(f)<<"] ";
+        std::cout << "compute_acc " << v0 << " [" << speed2ticks(v0) << "]  " << f << " [" << speed2ticks(f) << "] ";
         while (v < f && a.size() < stop_steps)
         {
             //std::cout << v << " " << t << std::endl; //DBG
             v = (_acc * t) + v0;
-            v = round(v/smooth_factor)*smooth_factor;
+            v = round(v / smooth_factor) * smooth_factor;
             uint32_t ticks = speed2ticks(v);
             v = tiks2speed(ticks);
             t += ticks2s(ticks);
             a.push_back(ticks);
         }
-        std::cout << "{" << a.size() << "} vf "<< f << " [" << speed2ticks(f) << "]   SF"<<smooth_factor<<std::endl;
-        
-        if(!a.empty())
-            std::cout << "a.front: "<< tiks2speed(a.front()) << " ["<<a.front()<<"] " << tiks2speed(a.back())<< " ["<< a.back()<<"]   end compute ------" << std::endl;
+        std::cout << "{" << a.size() << "} vf " << f << " [" << speed2ticks(f) << "]   SF" << smooth_factor << std::endl;
+
+        if (!a.empty())
+            std::cout << "a.front: " << tiks2speed(a.front()) << " [" << a.front() << "] " << tiks2speed(a.back()) << " [" << a.back() << "]   end compute ------" << std::endl;
         f = v;
     }
 
@@ -417,7 +417,7 @@ namespace oavda
 
         for (auto it = b; it != e; it++)
         {
-            if (acc.empty() || // accumulator is empty
+            if (acc.empty() ||              // accumulator is empty
                 acc.back().second != *it || // speeds differ
                 acc.back().first * sgn < 0) // direction differs
                 acc.emplace_back(sgn, *it);
@@ -442,20 +442,21 @@ namespace oavda
         m.curr_speed = 0;
     }
 
-    float AxisStepper::go_to(int32_t pos, float max_speed,const float& smooth_factor,bool then_track, error_t &err)
+    float AxisStepper::go_to(int32_t pos, float max_speed, const float &smooth_factor, bool then_track, error_t &err)
     {
         err = hk();
         if (err)
             return 0;
 
-        move_t m ={ .curr_speed = _speed_sps, .curr_position = _position };
+        move_t m = {.curr_speed = _speed_sps, .curr_position = _position};
 
-        append_goto(m, pos, max_speed, STOP_SPEED,smooth_factor);
+        append_goto(m, pos, max_speed, STOP_SPEED, smooth_factor);
         float time = commands2s(m.buffer);
 
-        if(then_track){
+        if (then_track)
+        {
             std::cout << "********  compute track *******" << std::endl;
-            append_goto(m, TRACK_END , _track_speed, STOP_SPEED,smooth_factor);
+            append_goto(m, TRACK_END, _track_speed, STOP_SPEED, smooth_factor);
         }
 
         err = bulk(m, true);
@@ -469,13 +470,13 @@ namespace oavda
         if (err)
             return 0;
 
-        move_t m ={ .curr_speed = _speed_sps, .curr_position = _position };
+        move_t m = {.curr_speed = _speed_sps, .curr_position = _position};
 
-        append_goto(m, m.curr_position + steps, MAX_SPEED, STOP_SPEED,1);
+        append_goto(m, m.curr_position + steps, MAX_SPEED, STOP_SPEED, 1);
         float time = commands2s(m.buffer); // we return just the jerk time
 
         if (_position != _target) // we were traveling (or tracking)
-            append_goto(m, _target, _speed_sps, STOP_SPEED,1);
+            append_goto(m, _target, _speed_sps, STOP_SPEED, 1);
 
         err = bulk(m, true);
 
@@ -483,7 +484,7 @@ namespace oavda
         return time;
     }
 
-    void AxisStepper::append_goto(move_t &m, int32_t pos, float max_speed, float final_speed,const float& smooth_factor)
+    void AxisStepper::append_goto(move_t &m, int32_t pos, float max_speed, float final_speed, const float &smooth_factor)
     {
         int32_t steps = pos - m.curr_position;
         if ((m.curr_speed < 0 && steps > 0) ||                 // do we need to reverse movement?
@@ -494,14 +495,14 @@ namespace oavda
             steps = pos - m.curr_position; // abs(steps) should increase and not change sign since we stop in the same movement direction
         }
 
-        std::cout <<"steps to target: " << steps << "  target: " << pos <<std::endl;
+        std::cout << "steps to target: " << steps << "  target: " << pos << std::endl;
         speed_t speed_acc, speed_decel;
-        int sgn = steps >0? 1 : -1;
+        int sgn = steps > 0 ? 1 : -1;
 
         float reached_speed = abs(max_speed);
-        compute_acc(abs(m.curr_speed), reached_speed, speed_acc, abs(steps) / 2,smooth_factor);
+        compute_acc(abs(m.curr_speed), reached_speed, speed_acc, abs(steps) / 2, smooth_factor);
         int32_t remain_steps = abs(steps) - speed_acc.size();
-        compute_acc(final_speed, reached_speed, speed_decel, LIMIT_STEPS,smooth_factor);
+        compute_acc(final_speed, reached_speed, speed_decel, LIMIT_STEPS, smooth_factor);
         remain_steps -= speed_decel.size();
         std::cout << "remain steps: " << remain_steps << std::endl;
 
@@ -532,7 +533,6 @@ namespace oavda
                 m.buffer.emplace_back(remain_steps * sgn, speed_ticks);
             else
                 m.buffer.emplace_back(remain_steps * sgn, speed_ticks);
-
         }
         compress(speed_decel.rbegin(), speed_decel.rend(), m.buffer, sgn); // append deceleration
 
@@ -548,7 +548,7 @@ namespace oavda
 
     inline error_t AxisPWM::hk()
     {
-        error_t err = read_hk(_dir, _speed_raw, _position, _buff_free);
+        error_t err = read_hk(_dir, _speed_raw, _position, _status, _buff_free);
         if (err)
             return err;
 

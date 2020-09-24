@@ -339,8 +339,8 @@ namespace rts2teld
 		moveTolerance->setValueDouble(4.0 / 60.0);
 
 		/* VARIABLES HERE */
-		addOption(OPT_TEENSYD_ADDR, "teensyd-ip", 1, "ip address of the C-RIO controller");
-		addOption(OPT_TEENSYD_PORT, "teensyd-port", 1, "port of the C-RIO controller");
+		addOption(OPT_TEENSYD_ADDR, "teensyd-ip", 1, "ip address of the teensyd server");
+		addOption(OPT_TEENSYD_PORT, "teensyd-port", 1, "port of the teensyd server");
 
 		_hrz_prev = {NAN, NAN};
 		_hrz_now = {NAN, NAN};
@@ -361,6 +361,15 @@ namespace rts2teld
 		{
 			if (!std::isnan(_hrz_prev.alt) && _hrz_prev.alt > _hrz_now.alt) // we are below min_alt and goind down, lets stop{
 				logStream(MESSAGE_ERROR) << "telescope is below min alt and not raising, azimuth is "
+										 << _hrz_now.az << " and altitude " << _hrz_now.alt << " STOPPING MOUNT"
+										 << sendLog;
+			abortMoveTracking();
+		}
+
+		if (_hrz_now.alt > _max_alt)
+		{
+			if (!std::isnan(_hrz_prev.alt) && _hrz_prev.alt < _hrz_now.alt) // we are below min_alt and goind down, lets stop{
+				logStream(MESSAGE_ERROR) << "telescope is below min alt and not decreasing, azimuth is "
 										 << _hrz_now.az << " and altitude " << _hrz_now.alt << " STOPPING MOUNT"
 										 << sendLog;
 			abortMoveTracking();
@@ -405,7 +414,7 @@ namespace rts2teld
 		{
 		case OPT_TEENSYD_ADDR:
 			_teensyd_ip = std::string(optarg);
-			std::cout << "IP " << _teensyd_ip;
+			std::cout << "IP " << _teensyd_ip << std::endl;
 			break;
 		case OPT_TEENSYD_PORT:
 			_teensyd_port = atoi(optarg);
