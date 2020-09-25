@@ -4,6 +4,7 @@
 #include <sstream>
 #include <thread> // std::this_thread::sleep_for
 #include <chrono> // std::chrono::seconds
+#include "../../include/app.h"
 
 #define CMD_READ_DATA 0x01
 #define CMD_READ_SETTINGS 0x02 /*TODO*/
@@ -46,37 +47,41 @@ namespace oavda
         }
         constexpr size_t BUFF_LEN = 1024;
         char buff[BUFF_LEN];
-        size_t s = 0;
+        size_t off = 0;
 
-        bool ok = false;
-        auto start = std::chrono::system_clock::now();
-        auto end = std::chrono::system_clock::now();
-        std::chrono::duration<double> diff = end - start;
+        auto s = _skt.native_handle();
+        fd_set set;
+        struct timeval timeout;
+        FD_ZERO(&set);      /* clear the set */
+        FD_SET(s, &set);    /* add our file descriptor to the set */
+        timeout.tv_sec = 1; // we require asnswer in 1.5 second time
+        timeout.tv_usec = 500000;
 
-        //FIXME  SUPERBAD use select... read_some does not return until at least 1 byte is red
-        while (diff.count() <= 1 && s < BUFF_LEN) // we require asnswer in 1 second time
+        while (true)
         {
-
-            auto asiobuff = boost::asio::buffer(buff + s, 1);
-            s += _skt.read_some(asiobuff, ec);
-            ///DBG       std::cout << "READ " << s << " bytes" << std::endl;
-
-            end = std::chrono::system_clock::now();
-            diff = end - start;
-
-            if (s == 0)
-                continue;
-
-            if (ec)
+            int rv = select(s + 1, &set, NULL, NULL, &timeout);
+            if (rv == -1)
+            { // error occured
+                std::cout << "ERROR SELECT" << std::endl;
+                getMasterApp()->logStream(MESSAGE_ERROR) << "DriverSerial: "
+                                                         << "select syscall returned -1" << sendLog;
+                ec = boost::system::errc::make_error_code(boost::system::errc::io_error);
+                break;
+            }
+            if (rv == 0) // timeout
             {
-                reconnect();
-                return res;
+                std::cout << "SELECT TIMEOUT" << std::endl;
+                getMasterApp()->logStream(MESSAGE_ERROR) << "DriverSerial: "
+                                                         << "select syscall timeout" << sendLog;
+                ec = boost::system::errc::make_error_code(boost::system::errc::timed_out);
+                break;
             }
 
+            auto asiobuff = boost::asio::buffer(buff + off, BUFF_LEN - off);
+            off += _skt.read_some(asiobuff);
             try
             {
-                res = msgpack::unpack(buff, s);
-                ok = true;
+                res = msgpack::unpack(buff, off);
                 break;
             }
             catch (const msgpack::insufficient_bytes &b)
@@ -86,25 +91,20 @@ namespace oavda
             catch (const std::exception &ex)
             {
                 std::cout << "error msgpack: " << ex.what() << std::endl;
+                getMasterApp()->logStream(MESSAGE_WARNING) << "DriverSerial: "
+                                                           << "bad msgpack error" << sendLog;
+                ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+                break;
+            }
+            if (off >= BUFF_LEN)
+            {
+                std::cout << "buffer full" << std::endl;
+                getMasterApp()->logStream(MESSAGE_WARNING) << "DriverSerial: "
+                                                           << "buffer full" << sendLog;
+                ec = boost::system::errc::make_error_code(boost::system::errc::no_buffer_space);
                 break;
             }
         }
-        if (ok)
-        {
-            ///DBG   if (res.get().type == msgpack::type::ARRAY &&
-            ///DBG       res.get().via.array.size > 1)
-            ///DBG       std::cout << "read res  [" << int(res.get().via.array.ptr[0].type) << "] " << std::endl;
-
-            return res;
-        }
-        if (diff.count() > 1)
-        {
-            std::cout << "TIMEOUT PDD" << std::endl;
-            ec = boost::system::errc::make_error_code(boost::system::errc::timed_out);
-        }
-        else
-            ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
-
         return res;
     }
 
@@ -119,6 +119,10 @@ namespace oavda
         if (res.get().via.array.size != 1)
         {
             std::cout << "decode_1  wrong array size, got " << int(res.get().via.array.size) << std::endl;
+            getMasterApp()->logStream(MESSAGE_WARNING) << "DriverSerial:decode "
+                                                       << "wrong array size, got "
+                                                       << int(res.get().via.array.size)
+                                                       << sendLog;
             return ERROR_COMM;
         }
 
@@ -130,6 +134,10 @@ namespace oavda
         {
             std::cout << "type decode_1  [" << int(res.get().via.array.ptr[0].type) << "] " << std::endl;
             std::cout << "decode_1 exception " << ex.what() << std::endl;
+            getMasterApp()->logStream(MESSAGE_WARNING) << "DriverSerial:decode "
+                                                       << "type decode_1  [" << int(res.get().via.array.ptr[0].type) << "] "
+                                                       << " exception " << ex.what()
+                                                       << sendLog;
         }
 
         return ERROR_COMM;
@@ -243,6 +251,9 @@ namespace oavda
         catch (const std::exception &ex)
         {
             std::cout << "[read_hk] " << ex.what() << std::endl;
+            getMasterApp()->logStream(MESSAGE_ERROR) << "AxisBase:read_hk "
+                                                       << " exception " << ex.what()
+                                                       << sendLog;
             return ERROR_COMM;
         }
 
@@ -363,7 +374,7 @@ namespace oavda
 
     inline error_t AxisStepper::hk()
     {
-        error_t err = read_hk(_dir, _speed_us, _position,_status, _buff_free);
+        error_t err = read_hk(_dir, _speed_us, _position, _status, _buff_free);
         if (err)
             return err;
 

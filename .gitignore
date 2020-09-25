@@ -109,6 +109,7 @@ src/redis/rts2-redis
 src/rotad/rts2-rotad-*
 src/scheduler/rts2-scheduler
 src/sensord/rts2-sensor-*
+src/teensyd/rts2-*
 src/teld/rts2-*
 src/ucac5/ucac5-*
 checks/*.log
