@@ -199,7 +199,7 @@ msgpack::object ConnectionTCP::decode_serial(uint8_t &err)
         }
 
         auto asiobuff = boost::asio::buffer(_data + _off, BUFF_LEN - _off);
-        _off += _ser.read_some(asiobuff);
+        _off += _ser.read_some(asiobuff); //FIXME use _ser.read_some(asiobuff,ec);
         try
         {
             auto handle = msgpack::unpack(_data, _off);

@@ -201,7 +201,7 @@ namespace rts2teld
 
 		bool _ra_sideral_tracking;
 
-		double _min_alt = 20;
+		double _min_alt = 10;
 		double _max_alt = 80;
 
 		ln_hrz_posn _hrz_prev;
@@ -231,7 +231,7 @@ namespace rts2teld
 
 } // namespace rts2teld
 
-/* DEBUG UTILS */
+/* ** DEBUG UTILS ** */
 #include <iomanip>
 
 std::ostream &print_hour(std::ostream &stream, const double &angle)
@@ -261,6 +261,8 @@ std::ostream &print_hour(std::ostream &stream, const double &angle)
 
 	return stream;
 }
+/* ** DEBUG UTILS ** */
+
 
 std::ostream &print_deg(std::ostream &stream, const double &angle)
 {
@@ -348,7 +350,7 @@ namespace rts2teld
 
 	int Oavda810::idle()
 	{
-		std::cout << "++ idle" << std::endl;
+		//DBG std::cout << "++ idle" << std::endl;
 
 		/*-- check horizon --*/
 		int32_t ac, dc;
@@ -380,7 +382,7 @@ namespace rts2teld
 
 	int Oavda810::init()
 	{
-		std::cout << "++ init" << std::endl;
+		//DBG std::cout << "++ init" << std::endl;
 		int ret;
 		ret = Telescope::init();
 		if (ret)
@@ -409,12 +411,10 @@ namespace rts2teld
 
 	int Oavda810::processOption(int in_opt)
 	{
-		std::cout << "++ processOption: " << in_opt << std::endl;
 		switch (in_opt)
 		{
 		case OPT_TEENSYD_ADDR:
 			_teensyd_ip = std::string(optarg);
-			std::cout << "IP " << _teensyd_ip << std::endl;
 			break;
 		case OPT_TEENSYD_PORT:
 			_teensyd_port = atoi(optarg);
@@ -427,7 +427,7 @@ namespace rts2teld
 
 	int Oavda810::info()
 	{
-		/*DBG*/ std::cout << "++ info" << std::endl;
+		//DBG std::cout << "++ info" << std::endl;
 		int32_t raPos, decPos;
 		oavda::error_t err = update_position(raPos, decPos);
 		if (err)
@@ -455,7 +455,6 @@ namespace rts2teld
 		_ra_sideral_tracking = false;
 		oavda::error_t err = 0;
 
-		std::cout << "++ startResync" << std::endl;
 		if (_motor_ra.stop())
 		{
 			std::cout << "ra stop returned error" << std::endl;
@@ -532,8 +531,8 @@ namespace rts2teld
 				return -1;
 			int32_t diff_ac = ac - pos_ra;
 			int32_t diff_dc = dc - pos_dec;
-			std::cout << "diff_ac: " << diff_ac << std::endl; //DBG
-			std::cout << "diff_dc: " << diff_dc << std::endl; //DBG
+			//std::cout << "diff_ac: " << diff_ac << std::endl; //DBG
+			//std::cout << "diff_dc: " << diff_dc << std::endl; //DBG
 			// if difference in H is greater then moveTolerance..
 			if (abs(diff_ac) > haCpd->getValueDouble() * moveTolerance->getValueDouble())
 			{
@@ -645,7 +644,7 @@ meglio ricalcolare il target per arrivare più precisi su repointing lunghi... o
 			int32_t pos_dec;
 			oavda::error_t err = update_position(pos_ra, pos_dec);
 			if (err)
-				return Telescope::runTracking(); //FIXME WHY did I do that?!?
+				return Telescope::runTracking(); // let's hope the next call update_position works
 
 			int32_t ac = pos_ra;
 			int32_t dc = pos_dec;
@@ -797,7 +796,7 @@ meglio ricalcolare il target per arrivare più precisi su repointing lunghi... o
 							 struct ln_equ_posn *pos, struct ln_hrz_posn *hrz_out,
 							 int32_t &ac, int32_t &dc, bool writeValues, double haMargin, bool forceShortest)
 	{
-		std::cout << "++ sky2counts" << std::endl;
+		// DBG std::cout << "++ sky2counts" << std::endl;
 		double ls, ha, dec;
 		struct ln_equ_posn tar_pos;
 
@@ -847,7 +846,7 @@ meglio ricalcolare il target per arrivare più precisi su repointing lunghi... o
 
 		/* APPLY MODEL?*/
 
-		std::cout << "*-*-*-*-*-*-*-*-* S2C  tn_ac: " << tn_ac << "   tn_dc: " << tn_dc << "   *-*-*-*-*-*-*-*-*" << std::endl;
+		//std::cout << "*-*-*-*-*-*-*-*-* S2C  tn_ac: " << tn_ac << "   tn_dc: " << tn_dc << "   *-*-*-*-*-*-*-*-*" << std::endl;
 		ac = tn_ac % RA_TICKS;
 		dc = tn_dc % DEC_TICKS;
 
@@ -857,8 +856,8 @@ meglio ricalcolare il target per arrivare più precisi su repointing lunghi... o
 		if (abs(dc) > DEC_TICKS / 2)
 			dc = dc > 0 ? dc - DEC_TICKS : dc + DEC_TICKS;
 
-		std::cout << "*-*-*-*-*-*-*-*-* S2C     ac: " << ac << "      dc: " << dc << "   *-*-*-*-*-*-*-*-*" << std::endl;
-		std::cout << "*-*-*-*-*-*-*-*-* S2C     AT: " << RA_TICKS << "      DT: " << DEC_TICKS << "   *-*-*-*-*-*-*-*-*" << std::endl;
+		//std::cout << "*-*-*-*-*-*-*-*-* S2C     ac: " << ac << "      dc: " << dc << "   *-*-*-*-*-*-*-*-*" << std::endl;
+		//std::cout << "*-*-*-*-*-*-*-*-* S2C     AT: " << RA_TICKS << "      DT: " << DEC_TICKS << "   *-*-*-*-*-*-*-*-*" << std::endl;
 
 		return 0;
 	}
@@ -897,26 +896,14 @@ meglio ricalcolare il target per arrivare più precisi su repointing lunghi... o
 
 	int Oavda810::setTo(double set_ra, double set_dec)
 	{
-		std::cout << "++ setTo" << std::endl;
 		int32_t raPos, decPos;
 		oavda::error_t err = update_position(raPos, decPos);
 		if (err)
 			return -1;
 
-		double t_telRa;
-		double t_telDec;
+		double ra_delta = set_ra -  getTelRa();
+		double dec_delta = set_dec - getTelDec();
 
-		double utc1, utc2;
-#ifdef RTS2_LIBERFA
-		getEraUTC(utc1, utc2);
-#else
-		utc1 = ln_get_julian_from_sys();
-		utc2 = 0;
-#endif
-		counts2sky(utc1, utc2, raPos, decPos, t_telRa, t_telDec);
-
-		double ra_delta = t_telRa - raPos;
-		double dec_delta = t_telDec - decPos;
 		haZero->setValueDouble(haZero->getValueDouble() + ra_delta);
 		decZero->setValueDouble(decZero->getValueDouble() + dec_delta);
 		return 0;

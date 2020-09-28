@@ -36,14 +36,25 @@ namespace oavda
     template <typename T>
     msgpack::object_handle AxisBase::send(T &msg, boost::system::error_code &ec)
     {
+        return do_send(msg, ec, 7);
+    }
+
+    template <typename T>
+    msgpack::object_handle AxisBase::do_send(T &msg, boost::system::error_code &ec, int retry)
+    {
         msgpack::object_handle res;
+
+        if (retry <= 0)
+            return res;
+
         std::stringstream buffer;
         msgpack::pack(buffer, msg);
         _skt.write_some(boost::asio::buffer(buffer.str()), ec);
         if (ec)
         {
-            reconnect();
-            return res;
+            ec = reconnect();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            return do_send(msg, ec, retry - 1);
         }
         constexpr size_t BUFF_LEN = 1024;
         char buff[BUFF_LEN];
@@ -66,6 +77,7 @@ namespace oavda
                 getMasterApp()->logStream(MESSAGE_ERROR) << "DriverSerial: "
                                                          << "select syscall returned -1" << sendLog;
                 ec = boost::system::errc::make_error_code(boost::system::errc::io_error);
+                return do_send(msg, ec, retry - 1);
                 break;
             }
             if (rv == 0) // timeout
@@ -74,11 +86,16 @@ namespace oavda
                 getMasterApp()->logStream(MESSAGE_ERROR) << "DriverSerial: "
                                                          << "select syscall timeout" << sendLog;
                 ec = boost::system::errc::make_error_code(boost::system::errc::timed_out);
+                return do_send(msg, ec, retry - 1);
                 break;
             }
 
             auto asiobuff = boost::asio::buffer(buff + off, BUFF_LEN - off);
-            off += _skt.read_some(asiobuff);
+            off += _skt.read_some(asiobuff, ec);
+            if (ec)
+            {
+                return do_send(msg, ec, retry - 1);
+            }
             try
             {
                 res = msgpack::unpack(buff, off);
@@ -94,6 +111,7 @@ namespace oavda
                 getMasterApp()->logStream(MESSAGE_WARNING) << "DriverSerial: "
                                                            << "bad msgpack error" << sendLog;
                 ec = boost::system::errc::make_error_code(boost::system::errc::bad_message);
+                return do_send(msg, ec, retry - 1);
                 break;
             }
             if (off >= BUFF_LEN)
@@ -102,6 +120,7 @@ namespace oavda
                 getMasterApp()->logStream(MESSAGE_WARNING) << "DriverSerial: "
                                                            << "buffer full" << sendLog;
                 ec = boost::system::errc::make_error_code(boost::system::errc::no_buffer_space);
+                return do_send(msg, ec, retry - 1);
                 break;
             }
         }
@@ -252,8 +271,8 @@ namespace oavda
         {
             std::cout << "[read_hk] " << ex.what() << std::endl;
             getMasterApp()->logStream(MESSAGE_ERROR) << "AxisBase:read_hk "
-                                                       << " exception " << ex.what()
-                                                       << sendLog;
+                                                     << " exception " << ex.what()
+                                                     << sendLog;
             return ERROR_COMM;
         }
 

@@ -31,7 +31,7 @@ namespace oavda
     class AxisBase
     {
     public:
-        AxisBase(uint8_t motor) :  _motor(motor), _skt(_io_service){}
+        AxisBase(uint8_t motor) : _motor(motor), _skt(_io_service) {}
         int init(const std::string &ip_addr, uint16_t port);
 
         error_t stop();
@@ -48,10 +48,13 @@ namespace oavda
     protected:
         template <typename T>
         msgpack::object_handle send(T &msg, boost::system::error_code &ec);
-        error_t read_hk(int8_t &dir, uint32_t &speed, int32_t &pos, uint8_t& status, uint8_t &buff_free);
+        error_t read_hk(int8_t &dir, uint32_t &speed, int32_t &pos, uint8_t &status, uint8_t &buff_free);
 
         uint8_t _motor;
+
     private:
+        template <typename T>
+        msgpack::object_handle do_send(T &msg, boost::system::error_code &ec,int retry);
         boost::system::error_code reconnect();
         boost::asio::io_service _io_service;
         boost::asio::ip::tcp::socket _skt;
@@ -76,7 +79,7 @@ namespace oavda
             RA = MOTOR_RA,
             DEC = MOTOR_DEC
         };
-        AxisStepper(axis ax,float track_speed = 0) : AxisAdv(uint8_t(ax)), _acc(20000),_track_speed(track_speed) {}
+        AxisStepper(axis ax, float track_speed = 0) : AxisAdv(uint8_t(ax)), _acc(20000), _track_speed(track_speed) {}
         int init(const std::string &ip_addr, uint16_t port = 1550) { return AxisAdv::init(ip_addr, port); }
         error_t stop() { return AxisAdv::stop(); }
         float get_speed(error_t &err)
@@ -86,7 +89,7 @@ namespace oavda
         }
         int32_t get_position(error_t &err);
         error_t set_position(int32_t pos);
-        float go_to(int32_t pos, float max_speed,const float& smooth_factor,bool then_track, error_t &err);
+        float go_to(int32_t pos, float max_speed, const float &smooth_factor, bool then_track, error_t &err);
         float jerk(int32_t steps, error_t &err);
         int32_t target() { return _target; }
 
@@ -101,14 +104,14 @@ namespace oavda
         } move_t;
 
         error_t hk();
-        void compute_acc(float min_speed, float &max_speed, speed_t &array, size_t max_steps,const float& smooth_factor = 100);
+        void compute_acc(float min_speed, float &max_speed, speed_t &array, size_t max_steps, const float &smooth_factor = 100);
         void append_stop(move_t &m);
-        void append_goto(move_t &m, int32_t pos, float max_speed, float final_speed,const float& smooth_factor);
+        void append_goto(move_t &m, int32_t pos, float max_speed, float final_speed, const float &smooth_factor);
         error_t bulk(move_t &m, bool start_now);
 
         template <typename IT>
         void compress(IT b, IT e, command_t &acc, int sgn = 1);
-        float _acc;  // steps * s^-2
+        float _acc; // steps * s^-2
         //bool _track; // usefull to restore tracking speed after correction
 
         int8_t _dir;
